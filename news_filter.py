@@ -29,90 +29,127 @@ class NewsFilter:
             '5': 'DefAI'
         }
         
+    def _get_category_context(self, category):
+        """Get specific context and focus areas for each category"""
+        contexts = {
+            'NEAR Ecosystem': """
+            Focus Areas:
+            - Protocol Development & Infrastructure
+            - DeFi and Smart Contract Innovations
+            - Cross-chain Integrations & Bridges
+            - Developer Tools & SDKs
+            - Ecosystem Growth & Adoption
+            - AI & Web3 Integration
+            """,
+            'Polkadot Ecosystem': """
+            Focus Areas:
+            - Parachain Development & Integration
+            - Cross-chain Messaging (XCM)
+            - Governance & Treasury
+            - Technical Infrastructure
+            - Ecosystem Partnerships
+            """,
+            'Arbitrum Ecosystem': """
+            Focus Areas:
+            - Layer 2 Scaling Solutions
+            - Protocol Deployments & TVL
+            - Governance & DAO Activities
+            - Infrastructure Development
+            - Ecosystem Growth Initiatives
+            """,
+            'IOTA Ecosystem': """
+            Focus Areas:
+            - Protocol Development & Updates
+            - Smart Contract Platform
+            - IoT Integration & Use Cases
+            - Network Security & Performance
+            - Industry Partnerships
+            """,
+            'AI Agents': """
+            Focus Areas:
+            - Agent Development Frameworks
+            - AI-Blockchain Integration
+            - Autonomous Systems & DAOs
+            - Multi-agent Systems
+            - AI Safety & Governance
+            - Real-world Applications
+            """,
+            'DefAI': """
+            Focus Areas:
+            - Decentralized AI Infrastructure
+            - AI Model Training & Deployment
+            - Data Privacy & Security
+            - Tokenized AI Systems
+            - Cross-chain AI Solutions
+            """
+        }
+        return contexts.get(category, "")
+
     async def analyze_tweets(self, tweets, category):
         """Analyze tweets and categorize them using Deepseek API"""
         try:
             prompt = f"""
-            You are a crypto and web3 analyst. Your task is to analyze, filter, and categorize tweets for the {category} category.
-            
-            ### **Strict Filtering Rules**
-            You must filter out tweets that match ANY of these criteria:
+            You are a specialized crypto and web3 analyst focusing on {category}. Your task is to filter and categorize tweets for the daily news summary.
 
-            1. Relevance:
-               - Not directly related to {category} development, technology, or ecosystem
-               - Generic crypto market commentary without specific {category} impact
-               - Retweets/quotes without additional valuable context
-               - Personal opinions without factual basis
+            ### Filtering Rules
+            First, filter out tweets that:
+            1. Lack direct relevance to {category}'s ecosystem
+            2. Contain no concrete, verifiable information
+            3. Have no clear ecosystem impact
+            4. Are generic announcements without specifics
+            5. Are retweets without additional valuable context
+            6. Are promotional without significant news value
 
-            2. Content Quality:
-               - No concrete information or verifiable facts
-               - Vague announcements without specifics
-               - Simple price commentary or price predictions
-               - "GM", "GN", or other greeting-only tweets
-               - Memes or jokes without substantial information
+            ### Categorization Rules
+            After filtering, organize remaining tweets into subcategories:
+            1. Maximum 5 subcategories (excluding "Other Updates")
+            2. Each subcategory must have at least 3 tweets
+            3. If a subcategory has fewer than 3 tweets, move them to "Other Updates"
+            4. Choose subcategory names that reflect major themes or developments
+            5. Ensure subcategories are specific to {category}
 
-            3. Promotional Content:
-               - Token shilling or "buy now" messages
-               - Self-promotional content without news value
-               - Marketing language without concrete updates
-               - Airdrops or giveaway announcements
-               - Trading signals or financial advice
+            ### Category Context
+            {self._get_category_context(category)}
 
-            4. Credibility:
-               - Unverified claims without sources
-               - Potential scams or suspicious projects
-               - Known fake accounts or impersonators
-               - Excessive hype or unrealistic claims
-               - Outdated or superseded information
-
-            5. Duplicates:
-               - Exact or near-duplicate content
-               - Multiple tweets about same topic without new info
-               - Repeated announcements or reminders
-               - Chain posts or thread summaries
-
-            ### **Instructions**
-            1. Apply filtering rules STRICTLY - when in doubt, filter out
-            2. Analyze remaining high-quality tweets to identify main themes
-            3. Determine up to 5 most relevant subcategories that best group these tweets
-            4. Each subcategory must have at least 3 tweets, otherwise add those tweets to "Other Updates"
-            5. Choose subcategory names that are specific and relevant to {category}
-            6. For each tweet, create an extremely concise summary (max 10-15 words)
-
-            ### **Summary Rules**
-            - Focus on key facts and actions only
-            - Remove unnecessary words and context
-            - Use active voice and present tense
-            - Include only the most impactful metrics/numbers
-            - Format: "author: [concise action/update] [URL]"
+            ### Summary Creation Rules
+            For each tweet:
+            - Create extremely concise summaries (max 12 words)
+            - Focus on concrete facts and metrics
+            - Use technical, precise language
+            - Include quantifiable metrics when available
+            - Format: "[Key Action/Development] with [Specific Detail]"
 
             Tweets to analyze:
             {json.dumps(tweets, indent=2)}
 
-            Return the result in the following JSON format:
+            ### Response Format
+            You must return your response in the following JSON format:
             {{
                 "filtered_count": 123,  // Number of tweets filtered out
-                "filter_reasons": {{     // Count of tweets filtered by each main reason
-                    "relevance": 45,
-                    "quality": 32,
-                    "promotional": 21,
-                    "credibility": 15,
-                    "duplicates": 10
-                }},
-                "subcategories": {{
-                    "Subcategory Name 1": [
-                        {{"author": "handle", "summary": "concise action/update", "url": "tweet_url"}}
+                "subcategories": {{     // Maximum 5 subcategories + "Other Updates"
+                    "Technical Name": [  // Each subcategory must have >= 3 tweets
+                        {{
+                            "author": "handle",
+                            "summary": "precise technical summary",
+                            "url": "tweet_url"
+                        }}
                     ],
-                    "Other Updates": [...]  // For tweets that don't fit main subcategories or groups with <3 tweets
+                    "Other Updates": [   // For tweets that don't fit main subcategories or groups with <3 tweets
+                        {{
+                            "author": "handle",
+                            "summary": "precise technical summary",
+                            "url": "tweet_url"
+                        }}
+                    ]
                 }}
             }}
 
             Remember:
-            - Be extremely strict with filtering - only keep highest quality tweets
-            - Maximum 5 subcategories (excluding "Other Updates")
-            - Each subcategory must have at least 3 tweets
-            - Subcategory names should be specific to {category}
-            - If a potential subcategory has fewer than 3 tweets, move them to "Other Updates"
+            - Apply filtering rules strictly
+            - Ensure each subcategory has at least 3 tweets
+            - Move tweets from subcategories with <3 tweets to "Other Updates"
+            - Use professional, technical subcategory names
+            - Maintain consistency in technical terminology
             """
             
             payload = {
@@ -144,20 +181,25 @@ class NewsFilter:
             return None
             
     def format_summary(self, date_str, category, subcategories):
-        """Format the summary according to the required template"""
+        """Format the summary according to Flow #6 requirements"""
         lines = [f"{date_str} - {category} Rollup\n"]
         
+        # Process each subcategory
         for subcategory, tweets in subcategories.items():
-            # Skip empty subcategories
-            if not tweets:
+            if not tweets or len(tweets) < 3:  # Skip empty subcategories or those with <3 tweets
                 continue
                 
             lines.append(f"{subcategory} 📌")
-            
             for tweet in tweets:
                 lines.append(f"{tweet['author']}: {tweet['summary']} {tweet['url']}")
             lines.append("")  # Empty line between subcategories
             
+        # Add Other Updates last if it exists and has tweets
+        if "Other Updates" in subcategories and subcategories["Other Updates"]:
+            lines.append("Other Updates 📌")
+            for tweet in subcategories["Other Updates"]:
+                lines.append(f"{tweet['author']}: {tweet['summary']} {tweet['url']}")
+        
         return "\n".join(lines)
         
     async def process_news(self, date_str=None):
@@ -179,6 +221,7 @@ class NewsFilter:
                 data = json.load(f)
                 
             summaries = {}
+            total_filtered = 0
             
             # Process each column
             for column_id, tweets in data['columns'].items():
@@ -196,25 +239,41 @@ class NewsFilter:
                 # Analyze and categorize tweets
                 result = await self.analyze_tweets(tweets, category)
                 if result and 'subcategories' in result:
+                    # Track filtered tweets
+                    filtered_count = result.get('filtered_count', 0)
+                    total_filtered += filtered_count
+                    logger.info(f"Filtered out {filtered_count} tweets from {category}")
+                    
                     # Format summary
                     summary = self.format_summary(date_str, category, result['subcategories'])
                     summaries[category] = {
                         'text': summary,
-                        'subcategories': result['subcategories']
+                        'subcategories': result['subcategories'],
+                        'filtered_count': filtered_count
                     }
-                    logger.info(f"Generated summary for {category}")
+                    
+                    # Log subcategory stats
+                    for subcat, tweets in result['subcategories'].items():
+                        logger.info(f"{category} - {subcat}: {len(tweets)} tweets")
                 else:
                     logger.error(f"Failed to generate summary for {category}")
             
-            # Save summaries
+            # Save summaries with metadata
+            summary_data = {
+                'date': date_str,
+                'total_filtered': total_filtered,
+                'summaries': summaries
+            }
+            
             summary_file = self.summaries_dir / f'summaries_{date_str}.json'
             with open(summary_file, 'w') as f:
-                json.dump(summaries, f, indent=2)
+                json.dump(summary_data, f, indent=2)
                 
-            logger.info(f"Saved summaries to {summary_file}")
+            logger.info(f"Saved summaries to {summary_file}. Total filtered tweets: {total_filtered}")
             
         except Exception as e:
             logger.error(f"Error processing news: {str(e)}")
+            raise
             
 if __name__ == "__main__":
     # Setup logging

@@ -31,7 +31,7 @@ class DataProcessor:
     def load_column_tweets(self, column_file):
         """Load tweets from a column file"""
         try:
-            with open(column_file, 'r') as f:
+            with open(column_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"Error loading tweets from {column_file}: {str(e)}")
@@ -117,7 +117,7 @@ class DataProcessor:
                         unique_tweets[tweet_id] = tweet
                         
                         # Add to column structure
-                        column_name = tweet['column']
+                        column_name = str(tweet.get('column', tweet.get('columnIndex', 0)))
                         if column_name not in columns:
                             columns[column_name] = []
                         columns[column_name].append(tweet)

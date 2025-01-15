@@ -79,7 +79,6 @@
             - [Subcategory] [Emoji]
             - [Author]: [Summary] [Tweet URL]
             - [Author]: [Summary] [Tweet URL]
-        - It will follow a specific prompt for summarizing the tweets. Prompt will be in #Documentation.
     7. Telegram Channel Sending
         - The sending service will be handling formatting the text of the summaries using HTML.
         - It will format the summaries via the following:
