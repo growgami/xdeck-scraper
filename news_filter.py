@@ -29,61 +29,90 @@ class NewsFilter:
             '5': 'DefAI'
         }
         
-        # Emoji mappings for subcategories
-        self.emojis = {
-            'Development & Technology': '🔧',
-            'Ecosystem Growth': '🌱',
-            'Market & Governance': '📊',
-            'External Relations': '🤝',
-            'Other Updates': '📢',
-            'Alerts': '⚠️'
-        }
-        
     async def analyze_tweets(self, tweets, category):
         """Analyze tweets and categorize them using Deepseek API"""
         try:
             prompt = f"""
-            You are a crypto and web3 analyst. Your task is to analyze a dataset of tweets and categorize them based on their **context** and **semantic meaning**. Focus on understanding the deeper intent of each tweet, rather than relying on specific words. 
+            You are a crypto and web3 analyst. Your task is to analyze, filter, and categorize tweets for the {category} category.
+            
+            ### **Strict Filtering Rules**
+            You must filter out tweets that match ANY of these criteria:
 
-            ### **Categorization Rules**
-            Organize tweets into the following categories:
-            1. **Development & Technology**: Updates about technical advancements, new feature launches, blockchain concepts, or innovations.
-            2. **Ecosystem Growth**: Tweets related to partnerships, community growth, adoption milestones, or integrations.
-            3. **Market & Governance**: Financial updates, tokenomics, governance changes, market trends, or liquidity-related insights.
-            4. **External Relations**: Collaborations, media coverage, new listings, or mentions outside the ecosystem.
-            5. **Other Updates**: Tweets that don't fit the above categories but provide relevant information (e.g., events, announcements).
-            6. **Alerts**: Identify potential scams, phishing attempts, or fake news based on context and cross-references within the dataset.
+            1. Relevance:
+               - Not directly related to {category} development, technology, or ecosystem
+               - Generic crypto market commentary without specific {category} impact
+               - Retweets/quotes without additional valuable context
+               - Personal opinions without factual basis
+
+            2. Content Quality:
+               - No concrete information or verifiable facts
+               - Vague announcements without specifics
+               - Simple price commentary or price predictions
+               - "GM", "GN", or other greeting-only tweets
+               - Memes or jokes without substantial information
+
+            3. Promotional Content:
+               - Token shilling or "buy now" messages
+               - Self-promotional content without news value
+               - Marketing language without concrete updates
+               - Airdrops or giveaway announcements
+               - Trading signals or financial advice
+
+            4. Credibility:
+               - Unverified claims without sources
+               - Potential scams or suspicious projects
+               - Known fake accounts or impersonators
+               - Excessive hype or unrealistic claims
+               - Outdated or superseded information
+
+            5. Duplicates:
+               - Exact or near-duplicate content
+               - Multiple tweets about same topic without new info
+               - Repeated announcements or reminders
+               - Chain posts or thread summaries
 
             ### **Instructions**
-            - **Contextual Categorization**: Use the semantic meaning of the tweet to determine the most appropriate category.
-            - **Combine Related Updates**: If multiple tweets from the same account or related context address the same topic, combine them into a single entry.
-            - **Detect Scams or Fake News**: Evaluate tweets for signs of phishing, compromised accounts, or unrealistic claims.
-            - **Minimum Tweets**: Each subcategory must have at least 3 tweets, otherwise move them to "Other Updates".
+            1. Apply filtering rules STRICTLY - when in doubt, filter out
+            2. Analyze remaining high-quality tweets to identify main themes
+            3. Determine up to 5 most relevant subcategories that best group these tweets
+            4. Each subcategory must have at least 3 tweets, otherwise add those tweets to "Other Updates"
+            5. Choose subcategory names that are specific and relevant to {category}
+            6. For each tweet, create an extremely concise summary (max 10-15 words)
 
             ### **Summary Rules**
-            - Keep summaries EXTREMELY concise (max 10-15 words)
             - Focus on key facts and actions only
             - Remove unnecessary words and context
             - Use active voice and present tense
             - Include only the most impactful metrics/numbers
+            - Format: "author: [concise action/update] [URL]"
 
-            Category to analyze: {category}
             Tweets to analyze:
             {json.dumps(tweets, indent=2)}
 
             Return the result in the following JSON format:
             {{
+                "filtered_count": 123,  // Number of tweets filtered out
+                "filter_reasons": {{     // Count of tweets filtered by each main reason
+                    "relevance": 45,
+                    "quality": 32,
+                    "promotional": 21,
+                    "credibility": 15,
+                    "duplicates": 10
+                }},
                 "subcategories": {{
-                    "Development & Technology": [
+                    "Subcategory Name 1": [
                         {{"author": "handle", "summary": "concise action/update", "url": "tweet_url"}}
                     ],
-                    "Ecosystem Growth": [...],
-                    "Market & Governance": [...],
-                    "External Relations": [...],
-                    "Other Updates": [...],
-                    "Alerts": [...]
+                    "Other Updates": [...]  // For tweets that don't fit main subcategories or groups with <3 tweets
                 }}
             }}
+
+            Remember:
+            - Be extremely strict with filtering - only keep highest quality tweets
+            - Maximum 5 subcategories (excluding "Other Updates")
+            - Each subcategory must have at least 3 tweets
+            - Subcategory names should be specific to {category}
+            - If a potential subcategory has fewer than 3 tweets, move them to "Other Updates"
             """
             
             payload = {
@@ -119,16 +148,11 @@ class NewsFilter:
         lines = [f"{date_str} - {category} Rollup\n"]
         
         for subcategory, tweets in subcategories.items():
-            # Skip subcategories with less than 3 tweets
-            if len(tweets) < 3:
-                # Move tweets to Other Updates
-                if "Other Updates" not in subcategories:
-                    subcategories["Other Updates"] = []
-                subcategories["Other Updates"].extend(tweets)
+            # Skip empty subcategories
+            if not tweets:
                 continue
                 
-            emoji = self.emojis.get(subcategory, '📌')
-            lines.append(f"{subcategory} {emoji}")
+            lines.append(f"{subcategory} 📌")
             
             for tweet in tweets:
                 lines.append(f"{tweet['author']}: {tweet['summary']} {tweet['url']}")
