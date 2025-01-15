@@ -180,6 +180,48 @@ class NewsFilter:
             logger.error(f"Error analyzing tweets: {str(e)}")
             return None
             
+    def _get_emoji(self, subcategory):
+        """Get appropriate emoji for a subcategory"""
+        emoji_map = {
+            # Technical & Development
+            'Protocol Development': '⚡',
+            'Technical Infrastructure': '🔧',
+            'Infrastructure Development': '🔧',
+            'Network Security': '🔒',
+            'Developer Tools': '🛠️',
+            
+            # Integration & Partnerships
+            'Cross-chain Integration': '🌉',
+            'Industry Partnerships': '🤝',
+            'Ecosystem Partnerships': '🤝',
+            'IoT Integration': '📱',
+            
+            # Governance & Community
+            'Governance': '⚖️',
+            'Treasury': '💰',
+            'DAO Activities': '🏛️',
+            
+            # Growth & Adoption
+            'Ecosystem Growth': '📈',
+            'Adoption': '🚀',
+            'TVL': '💹',
+            
+            # AI & Innovation
+            'AI Integration': '🤖',
+            'AI Development': '🧠',
+            'AI Safety': '🛡️',
+            'Multi-agent Systems': '🎯',
+            
+            # Default
+            'Other Updates': '📌'
+        }
+        
+        # Find best matching key
+        for key in emoji_map:
+            if key.lower() in subcategory.lower():
+                return emoji_map[key]
+        return '📌'  # Default emoji if no match
+
     def format_summary(self, date_str, category, subcategories):
         """Format the summary according to Flow #6 requirements"""
         lines = [f"{date_str} - {category} Rollup\n"]
@@ -189,16 +231,18 @@ class NewsFilter:
             if not tweets or len(tweets) < 3:  # Skip empty subcategories or those with <3 tweets
                 continue
                 
-            lines.append(f"{subcategory} 📌")
+            lines.append(f"{subcategory} {self._get_emoji(subcategory)}")
             for tweet in tweets:
-                lines.append(f"{tweet['author']}: {tweet['summary']} {tweet['url']}")
+                lines.append(f"{tweet['author']}: {tweet['summary']}")
+                lines.append(f"{tweet['url']}")
             lines.append("")  # Empty line between subcategories
             
         # Add Other Updates last if it exists and has tweets
         if "Other Updates" in subcategories and subcategories["Other Updates"]:
-            lines.append("Other Updates 📌")
+            lines.append(f"Other Updates {self._get_emoji('Other Updates')}")
             for tweet in subcategories["Other Updates"]:
-                lines.append(f"{tweet['author']}: {tweet['summary']} {tweet['url']}")
+                lines.append(f"{tweet['author']}: {tweet['summary']}")
+                lines.append(f"{tweet['url']}")
         
         return "\n".join(lines)
         
@@ -208,8 +252,6 @@ class NewsFilter:
             # Use today's date if none provided
             if not date_str:
                 date_str = datetime.now().strftime('%Y%m%d')
-                
-            logger.info(f"Processing news for date: {date_str}")
             
             # Load processed tweets
             file_path = self.processed_dir / f'processed_tweets_{date_str}.json'

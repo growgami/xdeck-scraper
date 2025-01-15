@@ -140,7 +140,7 @@ class TweetScorer:
                 data = json.load(f)
             
             # Process tweets in smaller chunks to avoid overwhelming the API
-            chunk_size = 3
+            chunk_size = 5
             tasks = []
             
             for column_id, tweets in data['columns'].items():
@@ -225,6 +225,13 @@ class TweetScorer:
         return f"""
         Please analyze this tweet's importance specifically for the {category} category and provide scores in JSON format.
 
+        STRICT SCORING RULES:
+        1. Tweet MUST explicitly mention the ecosystem name or its official projects/protocols
+        2. Generic blockchain/Web3 mentions are NOT sufficient
+        3. Do not make assumptions about project affiliations
+        4. Require clear evidence of ecosystem connection
+        5. When in doubt, score lower
+
         Tweet Content:
         Text: {tweet['text']}
         Author: {tweet['authorHandle']}
@@ -232,12 +239,32 @@ class TweetScorer:
         {"Reposted content: " + tweet['repostedContent']['text'] if tweet.get('repostedContent') else ""}
 
         Scoring criteria:
-        1. Relevance (0-1): How directly does this tweet relate to {category}? Consider mentions of key projects, technologies, or developments specific to this category.
-        2. Significance (0-1): How important is this news/update for the {category}? Consider the scale and scope of impact within this specific ecosystem.
-        3. Impact (0-1): What potential effects could this have on the {category}'s development or adoption? Consider both short and long-term implications.
-        4. Ecosystem relevance (0-1): How does this contribute to the overall growth and development of the {category}? Consider partnerships, integrations, or technological advancements.
+        1. Relevance (0-1): Does the tweet EXPLICITLY mention {category} or its verified projects? Score 0 if no direct mention.
+           - Score 0.9-1.0: Direct mention of ecosystem name + significant update
+           - Score 0.7-0.8: Direct mention of verified ecosystem project + update
+           - Score 0.0-0.3: Generic blockchain/Web3 content or unverified projects
+           - Score 0: No explicit mention of ecosystem or verified projects
 
-        Your reasoning must explain why this tweet matters specifically for the {category}.
+        2. Significance (0-1): How important is this verified update for {category}?
+           - Must be about confirmed ecosystem projects
+           - Score based on concrete impact, not potential
+           - Lower score if relationship is unclear
+
+        3. Impact (0-1): What measurable effects will this have on {category}?
+           - Require specific metrics or clear outcomes
+           - Must directly relate to ecosystem growth
+           - Lower score for indirect or assumed benefits
+
+        4. Ecosystem relevance (0-1): How does this contribute to {category}'s development?
+           - Must demonstrate clear ecosystem connection
+           - Score 0 if relationship is assumed
+           - Higher scores only for official integrations/partnerships
+
+        Your reasoning must:
+        1. Identify the EXPLICIT mention of ecosystem or verified project
+        2. Explain why you're confident about ecosystem connection
+        3. Point out any assumptions you made (and lower score accordingly)
+        4. Be skeptical of unverified relationships
 
         EXAMPLE JSON OUTPUT:
         {{
@@ -246,7 +273,7 @@ class TweetScorer:
             "impact": 0.9,
             "ecosystem_relevance": 0.85,
             "average_score": 0.81,
-            "reasoning": "This announcement directly impacts {category} by [specific reason]. It represents a significant development because [category-specific importance]. The potential impact on the ecosystem is substantial due to [specific implications for this category]."
+            "reasoning": "This tweet EXPLICITLY mentions {category} by [exact reference]. The ecosystem connection is verified through [specific evidence]. The impact is clear because [concrete metrics/outcomes]. Note: I assumed [any assumptions] and lowered the score accordingly."
         }}
         """
             

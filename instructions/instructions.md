@@ -93,8 +93,9 @@
         - It will log the error, the time it occurred, and the error message.
         - Error logging will be explicit and detailed.
         - There will be error handling for all the core functionalities.
+        - It should have retry logic for all the core functionalities.
+        - It should have exponential backoff for all the core functionalities.
     9. Garbage Collection
-        - The application will be ran in a 2 core 2GB RAM vultr server.
         - The application will need to be able to handle the load of scraping and sending the news summaries.
         - The application will need to be optimized for performance and memory usage.
         - The application need to have memory cleanup and garbage collection for necessary processes.
