@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import asyncio
 import random
+from error_handler import with_retry, BrowserError, log_error, RetryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ class BrowserAutomation:
         self.context = None
         self.page = None
         self.storage_state_path = Path("data/session/auth.json")
+        self.retry_config = RetryConfig(max_retries=3, base_delay=2.0, max_delay=30.0)
         
     async def human_type(self, element, text):
         """Type text with human-like delays"""
@@ -26,8 +28,9 @@ class BrowserAutomation:
         delay = random.uniform(min_seconds, max_seconds)
         await asyncio.sleep(delay)
         
+    @with_retry(RetryConfig(max_retries=3, base_delay=2.0, max_delay=30.0))
     async def init_browser(self):
-        """Initialize browser"""
+        """Initialize browser with retry logic"""
         try:
             playwright = await async_playwright().start()
             self.browser = await playwright.chromium.launch(
@@ -57,8 +60,8 @@ class BrowserAutomation:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to initialize browser: {str(e)}")
-            return False
+            log_error(logger, e, "Failed to initialize browser")
+            raise BrowserError(f"Browser initialization failed: {str(e)}")
             
     async def check_login_status(self):
         """Check if already logged in"""
@@ -68,8 +71,9 @@ class BrowserAutomation:
         except Exception:
             return False
             
+    @with_retry(RetryConfig(max_retries=3, base_delay=2.0, max_delay=30.0))
     async def handle_login(self):
-        """Handle the Twitter login process"""
+        """Handle Twitter login with retry logic"""
         try:
             # Navigate to Twitter
             await self.page.goto("https://pro.twitter.com")
@@ -152,8 +156,8 @@ class BrowserAutomation:
             return True
             
         except Exception as e:
-            logger.error(f"Login failed: {str(e)}")
-            return False
+            log_error(logger, e, "Login process failed")
+            raise BrowserError(f"Login failed: {str(e)}")
             
     async def navigate_to_tweetdeck(self):
         """Navigate to the specified TweetDeck URL"""
@@ -194,11 +198,41 @@ class BrowserAutomation:
             logger.error(f"Failed to store session: {str(e)}")
             
     async def close(self):
-        """Close browser and cleanup"""
-        if self.page:
-            await self.page.close()
-        if self.context:
-            await self.context.close()
-        if self.browser:
-            await self.browser.close()
-        logger.info("Browser closed") 
+        """Close browser resources gracefully"""
+        try:
+            # Store session before closing if we have an active context
+            if self.context:
+                try:
+                    await self.store_session()
+                except Exception as e:
+                    logger.warning(f"Failed to store session during shutdown: {str(e)}")
+
+            # Close in reverse order with small delays
+            if self.page:
+                try:
+                    await self.page.close()
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.debug(f"Page close error (expected during interrupt): {str(e)}")
+
+            if self.context:
+                try:
+                    await self.context.close()
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.debug(f"Context close error (expected during interrupt): {str(e)}")
+
+            if self.browser:
+                try:
+                    await self.browser.close()
+                except Exception as e:
+                    logger.debug(f"Browser close error (expected during interrupt): {str(e)}")
+
+            logger.info("Browser resources closed successfully")
+
+        except Exception as e:
+            # Log but don't raise during shutdown
+            logger.warning(f"Error during browser shutdown: {str(e)}")
+            # Force process termination if needed
+            import sys
+            sys.exit(0) 

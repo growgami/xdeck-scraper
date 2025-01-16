@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime
 import asyncio
 import aiohttp
+from error_handler import with_retry, APIError, log_error, RetryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +16,9 @@ class NewsFilter:
         self.summaries_dir = self.data_dir / 'summaries'
         self.api_key = config['deepseek_api_key']
         self.api_url = "https://api.deepseek.com/v1/chat/completions"
+        self.retry_config = RetryConfig(max_retries=3, base_delay=2.0, max_delay=30.0)
         
-        # Ensure summaries directory exists
+        # Ensure directories exist
         self.summaries_dir.mkdir(parents=True, exist_ok=True)
         
         # Category mappings
@@ -85,8 +87,9 @@ class NewsFilter:
         }
         return contexts.get(category, "")
 
+    @with_retry(RetryConfig(max_retries=3, base_delay=2.0))
     async def analyze_tweets(self, tweets, category):
-        """Analyze tweets and categorize them using Deepseek API"""
+        """Analyze tweets using DeepSeek API with retry logic"""
         try:
             prompt = f"""
             You are a specialized crypto and web3 analyst focusing on {category}. Your task is to filter and categorize tweets for the daily news summary.
@@ -173,12 +176,12 @@ class NewsFilter:
                         return result
                     else:
                         error_text = await response.text()
-                        logger.error(f"API error: {response.status} - {error_text}")
-                        return None
+                        log_error(logger, Exception(error_text), f"API error: {response.status}")
+                        raise APIError(f"API request failed: {response.status} - {error_text}")
                         
         except Exception as e:
-            logger.error(f"Error analyzing tweets: {str(e)}")
-            return None
+            log_error(logger, e, "Failed to analyze tweets")
+            raise APIError(f"Tweet analysis failed: {str(e)}")
             
     def _get_emoji(self, subcategory):
         """Get appropriate emoji for a subcategory"""
@@ -246,12 +249,14 @@ class NewsFilter:
         
         return "\n".join(lines)
         
+    @with_retry(RetryConfig(max_retries=2, base_delay=1.0))
     async def process_news(self, date_str=None):
-        """Process and filter news for a given date"""
+        """Process and filter news with retry logic"""
         try:
-            # Use today's date if none provided
             if not date_str:
                 date_str = datetime.now().strftime('%Y%m%d')
+                
+            logger.info(f"Processing news for date: {date_str}")
             
             # Load processed tweets
             file_path = self.processed_dir / f'processed_tweets_{date_str}.json'
@@ -267,40 +272,49 @@ class NewsFilter:
             
             # Process each column
             for column_id, tweets in data['columns'].items():
-                if not tweets:
-                    logger.info(f"Skipping empty column {column_id}")
+                try:
+                    if not tweets:
+                        logger.info(f"Skipping empty column {column_id}")
+                        continue
+                        
+                    category = self.categories.get(column_id)
+                    if not category:
+                        logger.warning(f"No category mapping found for column {column_id}")
+                        continue
+                        
+                    logger.info(f"Analyzing {len(tweets)} tweets for {category}")
+                    
+                    # Analyze and categorize tweets
+                    result = await self.analyze_tweets(tweets, category)
+                    if result and 'subcategories' in result:
+                        filtered_count = result.get('filtered_count', 0)
+                        total_filtered += filtered_count
+                        
+                        # Format summary
+                        summary = self.format_summary(date_str, category, result['subcategories'])
+                        summaries[category] = {
+                            'text': summary,
+                            'subcategories': result['subcategories'],
+                            'filtered_count': filtered_count
+                        }
+                        
+                    else:
+                        logger.error(f"Failed to generate summary for {category}")
+                        
+                except Exception as e:
+                    log_error(logger, e, f"Error processing column {column_id}")
                     continue
                     
-                category = self.categories.get(column_id)
-                if not category:
-                    logger.warning(f"No category mapping found for column {column_id}")
-                    continue
-                    
-                logger.info(f"Analyzing {len(tweets)} tweets for {category}")
-                
-                # Analyze and categorize tweets
-                result = await self.analyze_tweets(tweets, category)
-                if result and 'subcategories' in result:
-                    # Track filtered tweets
-                    filtered_count = result.get('filtered_count', 0)
-                    total_filtered += filtered_count
-                    logger.info(f"Filtered out {filtered_count} tweets from {category}")
-                    
-                    # Format summary
-                    summary = self.format_summary(date_str, category, result['subcategories'])
-                    summaries[category] = {
-                        'text': summary,
-                        'subcategories': result['subcategories'],
-                        'filtered_count': filtered_count
-                    }
-                    
-                    # Log subcategory stats
-                    for subcat, tweets in result['subcategories'].items():
-                        logger.info(f"{category} - {subcat}: {len(tweets)} tweets")
-                else:
-                    logger.error(f"Failed to generate summary for {category}")
+            # Save summaries
+            await self._save_summaries(date_str, summaries, total_filtered)
             
-            # Save summaries with metadata
+        except Exception as e:
+            log_error(logger, e, f"Failed to process news for date {date_str}")
+            raise APIError(f"News processing failed: {str(e)}")
+            
+    async def _save_summaries(self, date_str, summaries, total_filtered):
+        """Save summaries with error handling"""
+        try:
             summary_data = {
                 'date': date_str,
                 'total_filtered': total_filtered,
@@ -311,11 +325,11 @@ class NewsFilter:
             with open(summary_file, 'w') as f:
                 json.dump(summary_data, f, indent=2)
                 
-            logger.info(f"Saved summaries to {summary_file}. Total filtered tweets: {total_filtered}")
+            logger.info(f"Saved summaries to {summary_file}")
             
         except Exception as e:
-            logger.error(f"Error processing news: {str(e)}")
-            raise
+            log_error(logger, e, f"Failed to save summaries for date {date_str}")
+            raise APIError(f"Failed to save summaries: {str(e)}")
             
 if __name__ == "__main__":
     # Setup logging

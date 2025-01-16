@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import asyncio
 from datetime import datetime
+from error_handler import with_retry, DataProcessingError, log_error, RetryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,7 @@ class DataProcessor:
         self.data_dir = Path('data')
         self.raw_dir = self.data_dir / 'raw'
         self.processed_dir = self.data_dir / 'processed'
+        self.retry_config = RetryConfig(max_retries=3, base_delay=1.0, max_delay=15.0)
         
         # Get today's date for file naming
         self.today = datetime.now().strftime('%Y%m%d')
@@ -77,83 +79,167 @@ class DataProcessor:
             
         return True
         
-    async def process_tweets(self, date=None):
-        """Process all tweets according to requirements"""
-        # Use provided date or today
-        process_date = date or self.today
-        date_dir = self.raw_dir / process_date
-        
-        if not date_dir.exists():
-            logger.error(f"No data directory found for date {process_date}")
-            return 0
-            
-        logger.info(f"Starting tweet processing for {process_date}")
-        
+    @with_retry(RetryConfig(max_retries=3, base_delay=1.0))
+    async def process_tweets(self, date_str=None):
+        """Process tweets with retry logic"""
         try:
-            # Dictionary to track unique tweets by ID and organize by column
-            unique_tweets = {}  # For deduplication
-            columns = {}       # Final structure by column
-            
-            # Process each column's tweets from the date directory
-            for column_file in date_dir.glob('column_*.json'):
-                tweets = self.load_column_tweets(column_file)
-                logger.info(f"Processing {len(tweets)} tweets from {column_file.name}")
+            if not date_str:
+                date_str = datetime.now().strftime('%Y%m%d')
                 
-                for tweet in tweets:
-                    # Skip invalid tweets
-                    if not self.is_valid_tweet(tweet):
-                        continue
-                        
-                    # Normalize text
-                    tweet['text'] = self.normalize_text(tweet['text'])
-                    if tweet.get('quotedContent'):
-                        tweet['quotedContent']['text'] = self.normalize_text(tweet['quotedContent']['text'])
-                    if tweet.get('repostedContent'):
-                        tweet['repostedContent']['text'] = self.normalize_text(tweet['repostedContent']['text'])
-                    
-                    # Store only the most recent version of each tweet
-                    tweet_id = tweet['id']
-                    if tweet_id not in unique_tweets:
-                        unique_tweets[tweet_id] = tweet
-                        
-                        # Add to column structure
-                        column_name = str(tweet.get('column', tweet.get('columnIndex', 0)))
-                        if column_name not in columns:
-                            columns[column_name] = []
-                        columns[column_name].append(tweet)
+            logger.info(f"Processing tweets for date: {date_str}")
             
-            # Sort tweets in each column by ID (newer first)
-            for column_name in columns:
-                columns[column_name].sort(key=lambda x: x['id'], reverse=True)
-                logger.info(f"Processed {len(columns[column_name])} unique tweets for column {column_name}")
+            # Load and combine raw tweets
+            raw_columns = await self._load_raw_tweets()
+            if not raw_columns:
+                logger.warning("No raw tweets found to process")
+                return 0
+                
+            # Process tweets by column
+            processed_data = self._process_raw_tweets(raw_columns)
             
-            # Save processed tweets with date in filename
-            output_file = self.processed_dir / f'processed_tweets_{process_date}.json'
-            total_tweets = len(unique_tweets)
+            # Save processed tweets
+            await self._save_processed_tweets(processed_data, date_str)
             
-            with open(output_file, 'w') as f:
-                json.dump({
-                    'date': process_date,
-                    'total_tweets': total_tweets,
-                    'columns': columns
-                }, f, indent=2)
-            logger.info(f"Saved {total_tweets} processed tweets across {len(columns)} columns to {output_file}")
-            
-            return total_tweets
+            return processed_data['total_tweets']
             
         except Exception as e:
-            logger.error(f"Error processing tweets: {str(e)}")
-            return 0
+            log_error(logger, e, f"Failed to process tweets for date {date_str}")
+            raise DataProcessingError(f"Tweet processing failed: {str(e)}")
             
-        finally:
-            # Clean up dictionaries
-            if 'unique_tweets' in locals():
-                unique_tweets.clear()
-                del unique_tweets
-            if 'columns' in locals():
-                columns.clear()
-                del columns
-            logger.debug("Cleaned up processing dictionaries")
+    async def _load_raw_tweets(self):
+        """Load raw tweets with error handling"""
+        try:
+            columns = {}
+            # Look in today's directory instead of raw_dir directly
+            raw_dir = self.raw_dir / self.today
+            if not raw_dir.exists():
+                logger.error(f"Raw directory not found for date {self.today}")
+                return {}
+                
+            total_tweets = 0
+            for file in raw_dir.glob('column_*.json'):
+                try:
+                    column_id = file.stem.split('_')[1]  # Get column number from filename
+                    with open(file, 'r') as f:
+                        tweets = json.load(f)
+                        columns[column_id] = tweets
+                        total_tweets += len(tweets)
+                except Exception as e:
+                    log_error(logger, e, f"Failed to load tweets from {file}")
+                    continue
+                    
+            logger.info(f"Loaded {total_tweets} raw tweets from {len(columns)} columns in {raw_dir}")
+            return columns
+            
+        except Exception as e:
+            log_error(logger, e, "Failed to load raw tweets")
+            raise DataProcessingError(f"Raw tweet loading failed: {str(e)}")
+            
+    def _remove_duplicates(self, tweets):
+        """Remove duplicate tweets based on tweet ID"""
+        try:
+            seen_ids = set()
+            unique_tweets = []
+            
+            for tweet in tweets:
+                tweet_id = tweet.get('id')
+                if not tweet_id or tweet_id in seen_ids:
+                    continue
+                    
+                seen_ids.add(tweet_id)
+                unique_tweets.append(tweet)
+                
+            logger.info(f"Removed {len(tweets) - len(unique_tweets)} duplicate tweets")
+            return unique_tweets
+            
+        except Exception as e:
+            log_error(logger, e, "Failed to remove duplicates")
+            raise DataProcessingError(f"Duplicate removal failed: {str(e)}")
+            
+    def _normalize_tweet(self, tweet):
+        """Normalize tweet text and metadata"""
+        try:
+            normalized = tweet.copy()
+            
+            # Normalize text
+            if 'text' in normalized:
+                normalized['text'] = self.normalize_text(normalized['text'])
+                
+            # Add processing metadata
+            normalized['processed_at'] = datetime.now().isoformat()
+            
+            return normalized
+            
+        except Exception as e:
+            log_error(logger, e, f"Failed to normalize tweet: {tweet.get('id', 'unknown')}")
+            raise DataProcessingError(f"Tweet normalization failed: {str(e)}")
+            
+    def _process_raw_tweets(self, columns):
+        """Process raw tweets with error handling"""
+        try:
+            processed_data = {
+                'total_tweets': 0,
+                'columns': {}
+            }
+            
+            for column_id, tweets in columns.items():
+                logger.info(f"Processing column {column_id} with {len(tweets)} tweets")
+                
+                # Remove duplicates within this column
+                unique_tweets = self._remove_duplicates(tweets)
+                
+                # Filter invalid tweets
+                valid_tweets = [
+                    tweet for tweet in unique_tweets
+                    if self._is_valid_tweet(tweet)
+                ]
+                
+                # Normalize text
+                normalized_tweets = [
+                    self._normalize_tweet(tweet)
+                    for tweet in valid_tweets
+                ]
+                
+                if normalized_tweets:
+                    processed_data['columns'][column_id] = normalized_tweets
+                    processed_data['total_tweets'] += len(normalized_tweets)
+                    logger.info(f"Column {column_id}: {len(tweets)} → {len(normalized_tweets)} tweets after processing")
+                
+            return processed_data
+            
+        except Exception as e:
+            log_error(logger, e, "Failed to process raw tweets")
+            raise DataProcessingError(f"Tweet processing failed: {str(e)}")
+            
+    def _is_valid_tweet(self, tweet):
+        """Validate tweet with error handling"""
+        try:
+            if not tweet.get('text'):
+                return False
+                
+            text = tweet['text'].strip()
+            words = text.split()
+            
+            return len(words) >= 2
+            
+        except Exception as e:
+            log_error(logger, e, f"Failed to validate tweet: {tweet.get('id', 'unknown')}")
+            return False
+            
+    async def _save_processed_tweets(self, processed_data, date_str):
+        """Save processed tweets with error handling"""
+        try:
+            self.processed_dir.mkdir(parents=True, exist_ok=True)
+            output_file = self.processed_dir / f'processed_tweets_{date_str}.json'
+            
+            with open(output_file, 'w') as f:
+                json.dump(processed_data, f, indent=2)
+                
+            logger.info(f"Saved {processed_data['total_tweets']} processed tweets across {len(processed_data['columns'])} columns")
+                
+        except Exception as e:
+            log_error(logger, e, f"Failed to save processed tweets for date {date_str}")
+            raise DataProcessingError(f"Failed to save processed tweets: {str(e)}")
 
 if __name__ == "__main__":
     # Setup and run processor

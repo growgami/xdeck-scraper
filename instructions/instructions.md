@@ -84,12 +84,12 @@
         - It will format the summaries via the following:
             - Date - Category Rollup will be underlined , bold, and italic.
             - Subcategory will be in underlined and in bold.
-            - Author will be in bold.
+            - Author will be in bold and have - before author name.
             - Summary will be a hyperlink to the tweet using the Tweet Link.
         - The application will send the news summaries for each category to their respective telegram channels using channel IDs.
         - It will send the news summaries to the telegram channels at 12:00 AM GMT.
     8. Error Handling
-        - The application will handle errors and log them to a file for that day.
+        - The application will handle errors and log them to a file for that session.
         - It will log the error, the time it occurred, and the error message.
         - Error logging will be explicit and detailed.
         - There will be error handling for all the core functionalities.
@@ -101,73 +101,6 @@
         - The application need to have memory cleanup and garbage collection for necessary processes.
 
 # Documentation
-    1. Prompt for AI News Filtering
-        '''
-            const response = await this.openai.chat.completions.create({
-                model: "gpt-4o-mini",
-                messages: [
-                    {
-                        role: "system",
-                        content: `You are a crypto and web3 analyst. Your task is to analyze a dataset of tweets and categorize them based on their **context** and **semantic meaning**. Focus on understanding the deeper intent of each tweet, rather than relying on specific words. 
-
-### **Categorization Rules**
-Organize tweets into the following categories:
-1. **Development & Technology**: Updates about technical advancements, new feature launches, blockchain concepts, or innovations.
-2. **Ecosystem Growth**: Tweets related to partnerships, community growth, adoption milestones, or integrations.
-3. **Market & Governance**: Financial updates, tokenomics, governance changes, market trends, or liquidity-related insights.
-4. **External Relations**: Collaborations, media coverage, new listings, or mentions outside the ecosystem.
-5. **Other Updates**: Tweets that don't fit the above categories but provide relevant information (e.g., events, announcements).
-6. **Alerts**: Identify potential scams, phishing attempts, or fake news based on context and cross-references within the dataset.
-
-### **Instructions**
-- **Contextual Categorization**: Use the semantic meaning of the tweet to determine the most appropriate category.
-- **Combine Related Updates**: If multiple tweets from the same account or related context address the same topic, combine them into a single entry.
-- **Detect Scams or Fake News**: Evaluate tweets for signs of phishing, compromised accounts, or unrealistic claims.
-
-### **Summary Rules**
-- Keep summaries EXTREMELY concise (max 10-15 words)
-- Focus on key facts and actions only
-- Remove unnecessary words and context
-- Use active voice and present tense
-- Include only the most impactful metrics/numbers
-- Format: "author: [concise action/update] [URL]"
-
-### **Output Example**
-{
-    "Development & Technology": [
-        "author: Launches new cross-chain bridge with 5s finality [URL]"
-    ],
-    "Ecosystem Growth": [
-        "author: Partners with Microsoft for enterprise blockchain solutions [URL]"
-    ],
-    "Market & Governance": [
-        "author: TVL reaches $500M, up 25% this month [URL]"
-    ],
-    "External Relations": [
-        "author: Featured in Bloomberg article on DeFi innovation [URL]"
-    ],
-    "Other Updates": [
-        "author: Announces virtual hackathon with $100K prizes [URL]"
-    ],
-    "Alerts": [
-        "author: Warning: Fake airdrop campaign detected [URL]"
-    ]
-}`
-                    },
-                    {
-                        role: "user",
-                        content: `Analyze and categorize the following tweets into the structured format described above. Tweets:\n\n${JSON.stringify(tweets, null, 2)}`
-                    }
-                ],
-                temperature: 0.3
-            });
-
-            const summary = JSON.parse(response.choices[0].message.content);
-            const processedSummary = {
-                name: ecosystem,
-                subcategories: {}
-            };
-        '''
 
 # Current File Structure
 

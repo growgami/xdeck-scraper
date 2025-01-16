@@ -9,6 +9,8 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv
 import re
+import sys
+from error_handler import RetryConfig, with_retry, TelegramError, log_error, DataProcessingError
 
 # Setup logging
 logging.basicConfig(
@@ -17,15 +19,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Reduce httpx logging
+logging.getLogger('httpx').setLevel(logging.WARNING)
+
 class TelegramSender:
     def __init__(self, bot_token):
         if not bot_token:
             raise ValueError("Bot token is required")
         self.bot = Bot(token=bot_token)
-        self.max_retries = 3
-        self.base_delay = 2  # Base delay in seconds
         
-    def format_text(self, text):
+    @with_retry(RetryConfig(max_retries=3, base_delay=1.0))
+    async def format_text(self, text):
         """Format text with HTML tags according to instructions"""
         if not text:
             logger.warning("Received empty text to format")
@@ -44,13 +48,22 @@ class TelegramSender:
                     
                 # Format header (Date - Category Rollup)
                 if ' - ' in line and 'Rollup' in line:
-                    formatted_lines.append(f"<u><b><i>{html.escape(line)}</i></b></u>")
+                    # Convert date format from YYYYMMDD to Month DD
+                    try:
+                        date_str, rest = line.split(' - ', 1)
+                        date_obj = datetime.strptime(date_str, '%Y%m%d')
+                        formatted_date = date_obj.strftime('%B %d')
+                        formatted_header = f"{formatted_date} - {rest}"
+                        formatted_lines.append(f"<u><b><i>{html.escape(formatted_header)}</i></b></u>")
+                    except ValueError as e:
+                        log_error(logger, e, f"Failed to parse date: {date_str}")
+                        # Fallback to original format if date conversion fails
+                        formatted_lines.append(f"<u><b><i>{html.escape(line)}</i></b></u>")
                     i += 1
                     continue
                     
                 # Format subcategory with emoji
                 if not ':' in line and not line.startswith('http'):
-                    # Add newline before subcategory if not first line
                     if formatted_lines:
                         formatted_lines.append('')
                     formatted_lines.append(f"<u><b>{html.escape(line)}</b></u>")
@@ -66,16 +79,14 @@ class TelegramSender:
                         # Check next line for URL
                         if i + 1 < len(lines) and lines[i + 1].strip().startswith('http'):
                             url = lines[i + 1].strip()
-                            i += 2  # Skip both current line and URL line
+                            i += 2
                         else:
-                            i += 1  # Just skip current line
+                            i += 1
                             
-                        # Format with dash, bold author, and hyperlinked content
                         formatted_lines.append(f"- <b>{html.escape(author.strip())}</b>: <a href='{url}'>{html.escape(content.strip())}</a>")
                             
                     except Exception as e:
-                        logger.error(f"Failed to format tweet line: {line}")
-                        logger.error(f"Error: {str(e)}")
+                        log_error(logger, e, f"Failed to format tweet line: {line}")
                         formatted_lines.append(line)
                         i += 1
                     continue
@@ -91,120 +102,143 @@ class TelegramSender:
                 i += 1
                 
             return '\n'.join(formatted_lines)
+            
         except Exception as e:
-            logger.error(f"Error formatting text: {str(e)}")
-            logger.error(f"Original text: {text[:100]}...")  # Log first 100 chars
-            raise
+            log_error(logger, e, "Failed to format text")
+            raise TelegramError(f"Text formatting failed: {str(e)}")
         
+    @with_retry(RetryConfig(max_retries=3, base_delay=2.0))
     async def send_message(self, channel_id: str, text: str) -> bool:
         """Send a message to a Telegram channel with retry logic"""
         if not text or text.isspace():
-            logger.info("Empty message, skipping send")
             return False
             
         if not channel_id:
             logger.error("No channel ID provided")
             return False
             
-        for attempt in range(self.max_retries):
-            try:
-                await self.bot.send_message(
-                    chat_id=channel_id,
-                    text=text,
-                    parse_mode='HTML',
-                    disable_web_page_preview=True  # Prevent URL previews
-                )
-                logger.info(f"Successfully sent message to channel {channel_id}")
-                return True
-                
-            except Exception as e:
-                delay = self.base_delay * (2 ** attempt)  # Exponential backoff
-                logger.warning(f"Attempt {attempt + 1}/{self.max_retries} failed: {str(e)}")
-                
-                if attempt < self.max_retries - 1:
-                    logger.info(f"Retrying in {delay} seconds...")
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(f"Failed to send message after {self.max_retries} attempts")
-                    logger.error(f"Last error: {str(e)}")
-                    return False
-                    
+        try:
+            await self.bot.send_message(
+                chat_id=channel_id,
+                text=text,
+                parse_mode='HTML',
+                disable_web_page_preview=True
+            )
+            return True
+            
+        except Exception as e:
+            log_error(logger, e, f"Failed to send message to channel {channel_id}")
+            raise TelegramError(f"Failed to send message: {str(e)}")
+
+@with_retry(RetryConfig(max_retries=3, base_delay=1.0))
+async def load_json_file(file_path):
+    """Load and parse JSON file with retry"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        log_error(logger, e, f"Failed to load JSON file: {file_path}")
+        raise DataProcessingError(f"Failed to load JSON file: {str(e)}")
+
+@with_retry(RetryConfig(max_retries=3, base_delay=1.0))
+async def process_category(sender, category, content, channel_id):
+    """Process and send a category summary with retry"""
+    try:
+        if not isinstance(content, dict) or 'text' not in content:
+            logger.error(f"Invalid content structure for {category}")
+            return False
+            
+        raw_text = content['text']
+        if not raw_text or raw_text.isspace():
+            logger.error(f"Empty text for {category}")
+            return False
+            
+        formatted_text = await sender.format_text(raw_text)
+        if not formatted_text:
+            logger.error(f"Empty formatted text for {category}")
+            return False
+            
+        return await sender.send_message(channel_id=channel_id, text=formatted_text)
+        
+    except Exception as e:
+        log_error(logger, e, f"Failed to process category: {category}")
+        raise DataProcessingError(f"Failed to process category: {str(e)}")
+
 async def test_sender():
     """Test the TelegramSender"""
     load_dotenv()
     
     try:
+        # Get date from command line argument or use today's date
+        date_str = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime('%Y%m%d')
+        logger.info(f"Processing summaries for date: {date_str}")
+        
         # Validate environment variables
         bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-        test_channel_id = os.getenv('TELEGRAM_TEST_CHANNEL_ID')
-        
         if not bot_token:
             raise ValueError("TELEGRAM_BOT_TOKEN not found in environment variables")
-        if not test_channel_id:
-            raise ValueError("TELEGRAM_TEST_CHANNEL_ID not found in environment variables")
             
-        # Get date string for today
-        date_str = datetime.now().strftime('%Y%m%d')
+        # Channel mapping
+        channel_mapping = {
+            'NEAR Ecosystem': os.getenv('TELEGRAM_NEAR_CHANNEL_ID'),
+            'Polkadot Ecosystem': os.getenv('TELEGRAM_POLKADOT_CHANNEL_ID'),
+            'Arbitrum Ecosystem': os.getenv('TELEGRAM_ARBITRUM_CHANNEL_ID'),
+            'IOTA Ecosystem': os.getenv('TELEGRAM_IOTA_CHANNEL_ID'),
+            'AI Agents': os.getenv('TELEGRAM_AI_AGENT_CHANNEL_ID'),
+            'DefAI': os.getenv('TELEGRAM_DEFAI_CHANNEL_ID')
+        }
         
         # Load summaries
         summaries_file = Path('data') / 'summaries' / f'summaries_{date_str}.json'
         if not summaries_file.exists():
-            logger.info(f"No summaries file found for date {date_str}")
+            logger.error(f"No summaries file found for date {date_str}")
             return
             
         try:
-            with open(summaries_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            data = await load_json_file(summaries_file)
                 
-            if not data or not data.get('summaries'):
-                logger.info("No summaries found in file, skipping send")
+            if not data or 'summaries' not in data:
+                logger.error("No summaries found in data")
                 return
                 
-            sender = TelegramSender(bot_token)
+            summaries = data['summaries']
+            logger.info(f"Found summaries for: {', '.join(summaries.keys())}")
             
-            for category, content in data['summaries'].items():
+            sender = TelegramSender(bot_token)
+            valid_categories = set(channel_mapping.keys())
+            
+            for category, content in summaries.items():
+                if category not in valid_categories:
+                    continue
+                    
                 try:
-                    if not content.get('text'):
-                        logger.info(f"No text content for {category}, skipping")
+                    channel_id = channel_mapping.get(category)
+                    if not channel_id:
+                        logger.error(f"No channel ID found for {category}")
                         continue
                         
-                    raw_text = content['text']
-                    if not raw_text or raw_text.isspace():
-                        logger.info(f"Empty text for {category}, skipping")
-                        continue
-                        
-                    # Format the text with HTML tags before sending
-                    formatted_text = sender.format_text(raw_text)
-                    if not formatted_text:
-                        logger.info(f"Empty formatted text for {category}, skipping")
-                        continue
-                        
-                    success = await sender.send_message(
-                        channel_id=test_channel_id,
-                        text=formatted_text
-                    )
+                    logger.info(f"Sending {category} summary...")
+                    
+                    success = await process_category(sender, category, content, channel_id)
                     
                     if success:
                         logger.info(f"Successfully sent {category} summary")
                     else:
                         logger.error(f"Failed to send {category} summary")
                         
-                    await asyncio.sleep(2)  # Delay between messages
+                    await asyncio.sleep(2)
                     
                 except Exception as e:
-                    logger.error(f"Error processing category {category}: {str(e)}")
-                    continue  # Continue with next category even if one fails
+                    log_error(logger, e, f"Error processing {category}")
+                    continue
                     
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse summaries file: {str(e)}")
-            raise
+            log_error(logger, e, "Failed to parse summaries file")
+            raise DataProcessingError(f"Failed to parse summaries file: {str(e)}")
             
     except Exception as e:
-        logger.error(f"Error in test_sender: {str(e)}")
-        logger.error(f"Error details: {str(e.__class__.__name__)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise  # Re-raise to ensure the script exits with error
+        log_error(logger, e, "Error in sender")
+        raise
 
 if __name__ == "__main__":
     asyncio.run(test_sender()) 
