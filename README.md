@@ -143,4 +143,6 @@ sudo systemctl start newsbot
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+Copyright © 2024 Growgami. All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying, transfer, or reproduction of the contents of this software, via any medium, is strictly prohibited. 
