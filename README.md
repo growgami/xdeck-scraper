@@ -1,23 +1,23 @@
-# AI Newsletter
+# AI Newsletter Bot
 
 An AI-powered news aggregator and summarizer for crypto and web3 content. The service scrapes tweets from Twitter, processes them using AI to generate categorized news summaries, and distributes them through Telegram channels.
 
 ## Features
 
 - Automated Twitter scraping using Playwright
-- AI-powered tweet categorization and scoring
-- Smart news summarization using GPT-4
+- AI-powered tweet scoring and categorization using DeepSeek API
+- Smart news filtering and summarization
 - Automated distribution to Telegram channels
-- Memory-optimized for resource-constrained environments
+- Memory-optimized with garbage collection for 2GB RAM environments
+- Scheduled daily summaries at 6 AM UTC
 
 ## Prerequisites
 
-- Node.js 18+
-- NPM 8+
+- Python 3.10+
 - 2GB RAM minimum
-- Twitter Pro account
+- Twitter account with TweetDeck access
 - Telegram Bot Token and Channel IDs
-- OpenAI API Key
+- DeepSeek API Key
 
 ## Installation
 
@@ -27,19 +27,33 @@ git clone [repository-url]
 cd ai-newsletter
 ```
 
-2. Install dependencies
+2. Create and activate virtual environment
 ```bash
-npm install
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+venv\Scripts\activate     # Windows
 ```
 
-3. Create a `.env` file with the following variables:
+3. Install dependencies
+```bash
+pip install -r requirements.txt
+```
+
+4. Install Playwright browsers
+```bash
+playwright install
+```
+
+5. Create a `.env` file with the following variables:
 ```env
 # Twitter Credentials
 TWITTER_USERNAME=your_username
 TWITTER_PASSWORD=your_password
+TWITTER_VERIFICATION_CODE=your_2fa_code
+TWEETDECK_URL=https://tweetdeck.twitter.com/
 
-# OpenAI
-OPENAI_API_KEY=your_api_key
+# DeepSeek API
+DEEPSEEK_API_KEY=your_api_key
 
 # Telegram
 TELEGRAM_BOT_TOKEN=your_bot_token
@@ -47,51 +61,85 @@ TELEGRAM_POLKADOT_CHANNEL_ID=channel_id
 TELEGRAM_IOTA_CHANNEL_ID=channel_id
 TELEGRAM_ARBITRUM_CHANNEL_ID=channel_id
 TELEGRAM_NEAR_CHANNEL_ID=channel_id
-TELEGRAM_AI_AGENTS_CHANNEL_ID=channel_id
-TELEGRAM_CRYPTO_NEWS_CHANNEL_ID=channel_id
+TELEGRAM_AI_AGENT_CHANNEL_ID=channel_id
+TELEGRAM_DEFI_CHANNEL_ID=channel_id
+
+# Optional Configuration
+MONITOR_INTERVAL=0.1       # Tweet check interval in seconds
+MAX_RETRIES=3             # Maximum retries for operations
+RETRY_DELAY=2.0           # Base delay between retries
+GC_CHECK_INTERVAL=3600    # Garbage collection interval in seconds
 ```
 
 ## Usage
 
-1. Build the project:
+1. Start the bot:
 ```bash
-npm run build
-```
-
-2. Start the service:
-```bash
-npm start
+python main.py
 ```
 
 The service will automatically:
-- Scrape tweets at regular intervals
-- Process and categorize tweets using AI
-- Generate daily news summaries
-- Send summaries to Telegram channels at 00:00 GMT
+- Initialize browser and login to TweetDeck
+- Scrape tweets continuously from configured columns
+- Process and score tweets using DeepSeek API
+- Generate daily news summaries at 6 AM UTC
+- Send categorized summaries to Telegram channels
 
 ## Project Structure
 
 ```
-project-root/
-├── src/                      # Source code
-│   ├── services/            # Core services
-│   ├── config/              # Configuration files
-│   ├── utils/               # Utility functions
-│   └── index.ts             # Entry point
-├── data/                    # Data storage
-│   ├── tweets/              # Raw and processed tweets
-│   ├── summaries/           # Generated summaries
-│   └── logs/                # Application logs
-└── tests/                   # Test files
+ai-newsletter/
+├── main.py                 # Main application entry point
+├── browser_automation.py   # Browser automation using Playwright
+├── tweet_scraper.py       # Tweet scraping functionality
+├── data_processor.py      # Raw tweet processing
+├── tweet_scorer.py        # Tweet scoring using DeepSeek
+├── tweet_refiner.py       # Tweet refinement and deduplication
+├── news_filter.py         # News filtering and categorization
+├── telegram_sender.py     # Telegram message distribution
+├── garbage_collector.py   # Memory management
+├── category_mapping.py    # Centralized category configurations
+├── error_handler.py       # Error handling and retry logic
+├── data/                  # Data storage
+│   ├── raw/              # Raw scraped tweets by date
+│   ├── processed/        # Processed tweet data
+│   ├── summaries/        # Generated summaries
+│   └── session/          # Browser session data
+└── logs/                 # Application logs
 ```
 
-## Contributing
+## Category Structure
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+The bot processes tweets for the following ecosystems:
+- NEAR Ecosystem
+- Polkadot Ecosystem
+- Arbitrum Ecosystem
+- IOTA Ecosystem
+- AI Agents
+- DefAI
+
+Each category has specific focus areas and subcategories defined in `category_mapping.py`.
+
+## Deployment
+
+For production deployment, use the provided systemd service:
+
+1. Copy service file:
+```bash
+sudo cp newsbot.service /etc/systemd/system/
+```
+
+2. Create newsbot user and set permissions:
+```bash
+sudo useradd -r -s /bin/false newsbot
+sudo chown -R newsbot:newsbot /opt/ai_newsletter
+```
+
+3. Enable and start the service:
+```bash
+sudo systemctl enable newsbot
+sudo systemctl start newsbot
+```
 
 ## License
 
