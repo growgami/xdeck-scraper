@@ -1,11 +1,18 @@
+"""Tweet scoring and relevance analysis service"""
+
 import logging
 import json
 from pathlib import Path
 from datetime import datetime
 import asyncio
-import aiohttp
+from openai import OpenAI, AsyncOpenAI
+from error_handler import with_retry, APIError, log_error, RetryConfig
+from category_mapping import CATEGORY_MAP
 
 logger = logging.getLogger(__name__)
+
+# Reduce httpx logging
+logging.getLogger('httpx').setLevel(logging.WARNING)
 
 class TweetScorer:
     def __init__(self, config):
@@ -13,17 +20,10 @@ class TweetScorer:
         self.data_dir = Path('data')
         self.processed_dir = self.data_dir / 'processed'
         self.api_key = config['deepseek_api_key']
-        self.api_url = "https://api.deepseek.com/v1/chat/completions"  # Update with actual endpoint
+        self.client = AsyncOpenAI(api_key=self.api_key, base_url="https://api.deepseek.com/v1")
         
-        # Category mappings
-        self.categories = {
-            '0': 'NEAR Ecosystem',
-            '1': 'Polkadot Ecosystem',
-            '2': 'Arbitrum Ecosystem',
-            '3': 'IOTA Ecosystem',
-            '4': 'AI Agents',
-            '5': 'DefAI'
-        }
+        # Use centralized category mapping
+        self.categories = CATEGORY_MAP
         
     async def score_tweet(self, tweet, category):
         """Score a tweet for relevance to its category"""
@@ -37,50 +37,34 @@ class TweetScorer:
             
             for attempt in range(max_retries):
                 try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(
-                            self.api_url,
-                            json={
-                                "model": "deepseek-chat",
-                                "messages": [{
-                                    "role": "user",
-                                    "content": prompt
-                                }],
-                                "temperature": 0.1,
-                                "response_format": {"type": "json_object"},
-                                "max_tokens": 500
-                            },
-                            headers={
-                                "Authorization": f"Bearer {self.api_key}",
-                                "Content-Type": "application/json"
-                            },
-                            timeout=30
-                        ) as response:
-                            if response.status == 200:
-                                data = await response.json()
-                                result = json.loads(data['choices'][0]['message']['content'])
-                                
-                                # Calculate average score if not provided
-                                if 'average_score' not in result:
-                                    scores = [
-                                        result.get('relevance', 0),
-                                        result.get('significance', 0),
-                                        result.get('impact', 0),
-                                        result.get('ecosystem_relevance', 0)
-                                    ]
-                                    result['average_score'] = sum(scores) / len(scores)
-                                
-                                # Add metadata
-                                result['tweet_id'] = tweet['id']
-                                result['category'] = category
-                                
-                                # Log success
-                                logger.debug(f"Successfully scored tweet {tweet['id']} (avg: {result['average_score']:.2f})")
-                                return result
-                            else:
-                                error_text = await response.text()
-                                logger.warning(f"API error on attempt {attempt + 1}: {response.status} - {error_text}")
-                                
+                    response = await self.client.chat.completions.create(
+                        model="deepseek-chat",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.1,
+                        response_format={"type": "json_object"},
+                        max_tokens=500
+                    )
+                    
+                    result = json.loads(response.choices[0].message.content)
+                    
+                    # Calculate average score if not provided
+                    if 'average_score' not in result:
+                        scores = [
+                            result.get('relevance', 0),
+                            result.get('significance', 0),
+                            result.get('impact', 0),
+                            result.get('ecosystem_relevance', 0)
+                        ]
+                        result['average_score'] = sum(scores) / len(scores)
+                    
+                    # Add metadata
+                    result['tweet_id'] = tweet['id']
+                    result['category'] = category
+                    
+                    # Log success
+                    logger.debug(f"Successfully scored tweet {tweet['id']} (avg: {result['average_score']:.2f})")
+                    return result
+                        
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout on attempt {attempt + 1} for tweet {tweet['id']}")
                 except json.JSONDecodeError as e:
@@ -201,9 +185,12 @@ class TweetScorer:
                         
                     for score in scores:
                         if score and score.get('tweet_id') == tweet['id']:
-                            if score.get('relevance', 0) > 0.7:  # Only keep tweets with high relevance
+                            if score.get('average_score', 0) > 0.7:  # Keep tweets with average score > 0.7
                                 tweet['scores'] = score
                                 filtered_tweets.append(tweet)
+                                logger.debug(f"Kept tweet {tweet['id']} with average score {score.get('average_score', 0):.2f}")
+                            else:
+                                logger.debug(f"Filtered out tweet {tweet['id']} with average score {score.get('average_score', 0):.2f}")
                             break
                 
                 if filtered_tweets:

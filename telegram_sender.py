@@ -1,3 +1,5 @@
+"""Telegram message formatting and sending service"""
+
 import logging
 import html
 from telegram import Bot
@@ -11,6 +13,7 @@ from dotenv import load_dotenv
 import re
 import sys
 from error_handler import RetryConfig, with_retry, TelegramError, log_error, DataProcessingError
+from category_mapping import TELEGRAM_CHANNEL_MAP
 
 # Setup logging
 logging.basicConfig(
@@ -178,14 +181,10 @@ async def test_sender():
         if not bot_token:
             raise ValueError("TELEGRAM_BOT_TOKEN not found in environment variables")
             
-        # Channel mapping
+        # Use centralized channel mapping
         channel_mapping = {
-            'NEAR Ecosystem': os.getenv('TELEGRAM_NEAR_CHANNEL_ID'),
-            'Polkadot Ecosystem': os.getenv('TELEGRAM_POLKADOT_CHANNEL_ID'),
-            'Arbitrum Ecosystem': os.getenv('TELEGRAM_ARBITRUM_CHANNEL_ID'),
-            'IOTA Ecosystem': os.getenv('TELEGRAM_IOTA_CHANNEL_ID'),
-            'AI Agents': os.getenv('TELEGRAM_AI_AGENT_CHANNEL_ID'),
-            'DefAI': os.getenv('TELEGRAM_DEFAI_CHANNEL_ID')
+            category: os.getenv(f'TELEGRAM_{channel_key.upper()}_CHANNEL_ID')
+            for category, channel_key in TELEGRAM_CHANNEL_MAP.items()
         }
         
         # Load summaries

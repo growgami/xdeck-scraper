@@ -1,12 +1,18 @@
+"""News filtering and categorization service"""
+
 import logging
 import json
 from pathlib import Path
 from datetime import datetime
 import asyncio
-import aiohttp
+from openai import OpenAI, AsyncOpenAI
 from error_handler import with_retry, APIError, log_error, RetryConfig
+from category_mapping import CATEGORY_MAP, CATEGORY_FOCUS, EMOJI_MAP
 
 logger = logging.getLogger(__name__)
+
+# Reduce httpx logging
+logging.getLogger('httpx').setLevel(logging.WARNING)
 
 class NewsFilter:
     def __init__(self, config):
@@ -15,77 +21,21 @@ class NewsFilter:
         self.processed_dir = self.data_dir / 'processed'
         self.summaries_dir = self.data_dir / 'summaries'
         self.api_key = config['deepseek_api_key']
-        self.api_url = "https://api.deepseek.com/v1/chat/completions"
+        self.client = AsyncOpenAI(api_key=self.api_key, base_url="https://api.deepseek.com/v1")
         self.retry_config = RetryConfig(max_retries=3, base_delay=2.0, max_delay=30.0)
         
         # Ensure directories exist
         self.summaries_dir.mkdir(parents=True, exist_ok=True)
         
-        # Category mappings
-        self.categories = {
-            '0': 'NEAR Ecosystem',
-            '1': 'Polkadot Ecosystem',
-            '2': 'Arbitrum Ecosystem',
-            '3': 'IOTA Ecosystem',
-            '4': 'AI Agents',
-            '5': 'DefAI'
-        }
-        
+        # Use centralized category mapping
+        self.categories = CATEGORY_MAP
+
     def _get_category_context(self, category):
         """Get specific context and focus areas for each category"""
-        contexts = {
-            'NEAR Ecosystem': """
-            Focus Areas:
-            - Protocol Development & Infrastructure
-            - DeFi and Smart Contract Innovations
-            - Cross-chain Integrations & Bridges
-            - Developer Tools & SDKs
-            - Ecosystem Growth & Adoption
-            - AI & Web3 Integration
-            """,
-            'Polkadot Ecosystem': """
-            Focus Areas:
-            - Parachain Development & Integration
-            - Cross-chain Messaging (XCM)
-            - Governance & Treasury
-            - Technical Infrastructure
-            - Ecosystem Partnerships
-            """,
-            'Arbitrum Ecosystem': """
-            Focus Areas:
-            - Layer 2 Scaling Solutions
-            - Protocol Deployments & TVL
-            - Governance & DAO Activities
-            - Infrastructure Development
-            - Ecosystem Growth Initiatives
-            """,
-            'IOTA Ecosystem': """
-            Focus Areas:
-            - Protocol Development & Updates
-            - Smart Contract Platform
-            - IoT Integration & Use Cases
-            - Network Security & Performance
-            - Industry Partnerships
-            """,
-            'AI Agents': """
-            Focus Areas:
-            - Agent Development Frameworks
-            - AI-Blockchain Integration
-            - Autonomous Systems & DAOs
-            - Multi-agent Systems
-            - AI Safety & Governance
-            - Real-world Applications
-            """,
-            'DefAI': """
-            Focus Areas:
-            - Decentralized AI Infrastructure
-            - AI Model Training & Deployment
-            - Data Privacy & Security
-            - Tokenized AI Systems
-            - Cross-chain AI Solutions
-            """
-        }
-        return contexts.get(category, "")
+        return "\n".join([
+            "Focus Areas:",
+            *[f"- {focus}" for focus in CATEGORY_FOCUS.get(category, [])]
+        ])
 
     @with_retry(RetryConfig(max_retries=3, base_delay=2.0))
     async def analyze_tweets(self, tweets, category):
@@ -155,29 +105,16 @@ class NewsFilter:
             - Maintain consistency in technical terminology
             """
             
-            payload = {
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "response_format": {"type": "json_object"},
-                "max_tokens": 2000
-            }
+            response = await self.client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                response_format={"type": "json_object"},
+                max_tokens=4096
+            )
             
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(self.api_url, json=payload, headers=headers) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        result = json.loads(data['choices'][0]['message']['content'])
-                        return result
-                    else:
-                        error_text = await response.text()
-                        log_error(logger, Exception(error_text), f"API error: {response.status}")
-                        raise APIError(f"API request failed: {response.status} - {error_text}")
+            result = json.loads(response.choices[0].message.content)
+            return result
                         
         except Exception as e:
             log_error(logger, e, "Failed to analyze tweets")
@@ -185,68 +122,33 @@ class NewsFilter:
             
     def _get_emoji(self, subcategory):
         """Get appropriate emoji for a subcategory"""
-        emoji_map = {
-            # Technical & Development
-            'Protocol Development': '⚡',
-            'Technical Infrastructure': '🔧',
-            'Infrastructure Development': '🔧',
-            'Network Security': '🔒',
-            'Developer Tools': '🛠️',
-            
-            # Integration & Partnerships
-            'Cross-chain Integration': '🌉',
-            'Industry Partnerships': '🤝',
-            'Ecosystem Partnerships': '🤝',
-            'IoT Integration': '📱',
-            
-            # Governance & Community
-            'Governance': '⚖️',
-            'Treasury': '💰',
-            'DAO Activities': '🏛️',
-            
-            # Growth & Adoption
-            'Ecosystem Growth': '📈',
-            'Adoption': '🚀',
-            'TVL': '💹',
-            
-            # AI & Innovation
-            'AI Integration': '🤖',
-            'AI Development': '🧠',
-            'AI Safety': '🛡️',
-            'Multi-agent Systems': '🎯',
-            
-            # Default
-            'Other Updates': '📌'
-        }
-        
         # Find best matching key
-        for key in emoji_map:
+        for key in EMOJI_MAP:
             if key.lower() in subcategory.lower():
-                return emoji_map[key]
-        return '📌'  # Default emoji if no match
+                return EMOJI_MAP[key]
+        return EMOJI_MAP['Other Updates']  # Default emoji if no match
 
     def format_summary(self, date_str, category, subcategories):
         """Format the summary according to Flow #6 requirements"""
         lines = [f"{date_str} - {category} Rollup\n"]
         
-        # Process each subcategory
-        for subcategory, tweets in subcategories.items():
-            if not tweets or len(tweets) < 3:  # Skip empty subcategories or those with <3 tweets
-                continue
-                
-            lines.append(f"{subcategory} {self._get_emoji(subcategory)}")
-            for tweet in tweets:
-                lines.append(f"{tweet['author']}: {tweet['summary']}")
-                lines.append(f"{tweet['url']}")
-            lines.append("")  # Empty line between subcategories
+        # First process main subcategories (excluding "Other Updates")
+        main_subcategories = {k: v for k, v in subcategories.items() if k != "Other Updates"}
+        for subcategory, tweets in main_subcategories.items():
+            if tweets:  # Add subcategory even if less than 3 tweets
+                lines.append(f"{subcategory} {self._get_emoji(subcategory)}")
+                for tweet in tweets:
+                    lines.append(f"{tweet['author']}: {tweet['summary']}")
+                    lines.append(f"{tweet['url']}")
+                lines.append("")  # Empty line between subcategories
             
-        # Add Other Updates last if it exists and has tweets
+        # Then add Other Updates last if it exists
         if "Other Updates" in subcategories and subcategories["Other Updates"]:
             lines.append(f"Other Updates {self._get_emoji('Other Updates')}")
             for tweet in subcategories["Other Updates"]:
                 lines.append(f"{tweet['author']}: {tweet['summary']}")
                 lines.append(f"{tweet['url']}")
-        
+                
         return "\n".join(lines)
         
     @with_retry(RetryConfig(max_retries=2, base_delay=1.0))

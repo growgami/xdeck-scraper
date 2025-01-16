@@ -66,7 +66,7 @@ class TwitterNewsBot:
         
         # Initialize scheduler
         self.scheduler = AsyncIOScheduler()
-        
+            
         # Get today's date for file organization
         self.today = datetime.now(ZoneInfo("UTC")).strftime('%Y%m%d')
         
@@ -101,21 +101,22 @@ class TwitterNewsBot:
         logger.info("Initializing browser...")
         
         try:
+            # Initialize browser components
             self.browser = BrowserAutomation(self.config)
             
             # Initialize browser
             if not await self.browser.init_browser():
                 raise BrowserError("Failed to initialize browser")
-                
+            
             # Handle login
             if not await self.browser.handle_login():
                 raise BrowserError("Failed to login to Twitter")
-                
+            
             # Initialize tweet scraper
             self.scraper = TweetScraper(self.browser.page, self.config)
             if not await self.scraper.identify_columns():
                 raise BrowserError("Failed to identify TweetDeck columns")
-                
+            
             logger.info("Browser initialization complete")
             return True
             
@@ -124,7 +125,7 @@ class TwitterNewsBot:
             if self.browser:
                 await self.browser.close()
             raise BrowserError(f"Failed to initialize browser: {str(e)}")
-            
+        
     async def initial_scrape(self):
         """Initial scraping of all tweets from all columns"""
         logger = logging.getLogger(__name__)
@@ -166,7 +167,7 @@ class TwitterNewsBot:
         except Exception as e:
             logger.error(f"Error monitoring tweets: {str(e)}")
             return None
-        
+            
     async def process_data(self):
         """Process and deduplicate tweets"""
         logger = logging.getLogger(__name__)
@@ -414,7 +415,7 @@ class TwitterNewsBot:
             
         # Set shutdown event
         self._shutdown_event.set()
-        
+            
         # Cancel all running tasks
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         if tasks:
