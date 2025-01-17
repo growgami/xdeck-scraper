@@ -317,6 +317,13 @@ class TwitterNewsBot:
                     await self.send_telegram_updates()
                     logger.info("Completed sending Telegram updates")
                     
+                    # Restart browser to free up resources
+                    logger.info("Restarting browser to free up resources...")
+                    if self.browser:
+                        await self.browser.close()
+                    await self.initialize_browser()
+                    logger.info("Browser restarted successfully")
+                    
                 finally:
                     # Resume continuous scraping
                     self.pause_scraping = False
