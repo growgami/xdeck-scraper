@@ -31,7 +31,6 @@ class TelegramSender:
             raise ValueError("Bot token is required")
         self.bot = Bot(token=bot_token)
         
-    @with_retry(RetryConfig(max_retries=3, base_delay=1.0))
     async def format_text(self, text):
         """Format text with HTML tags according to instructions"""
         if not text:
@@ -109,11 +108,11 @@ class TelegramSender:
         except Exception as e:
             log_error(logger, e, "Failed to format text")
             raise TelegramError(f"Text formatting failed: {str(e)}")
-        
-    @with_retry(RetryConfig(max_retries=3, base_delay=2.0))
+
+    @with_retry(RetryConfig(max_retries=3, base_delay=1.0))
     async def send_message(self, channel_id: str, text: str) -> bool:
         """Send a message to a Telegram channel with retry logic"""
-        if not text or text.isspace():
+        if not text:
             return False
             
         if not channel_id:
@@ -121,9 +120,14 @@ class TelegramSender:
             return False
             
         try:
+            formatted_text = await self.format_text(text)
+            if not formatted_text:
+                logger.error("Empty formatted text")
+                return False
+                
             await self.bot.send_message(
                 chat_id=channel_id,
-                text=text,
+                text=formatted_text,
                 parse_mode='HTML',
                 disable_web_page_preview=True
             )
@@ -152,7 +156,7 @@ async def process_category(sender, category, content, channel_id):
             return False
             
         raw_text = content['text']
-        if not raw_text or raw_text.isspace():
+        if not raw_text:
             logger.error(f"Empty text for {category}")
             return False
             

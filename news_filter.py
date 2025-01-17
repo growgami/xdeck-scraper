@@ -3,7 +3,8 @@
 import logging
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
+import zoneinfo
 import asyncio
 from openai import OpenAI, AsyncOpenAI
 from error_handler import with_retry, APIError, log_error, RetryConfig
@@ -156,7 +157,10 @@ class NewsFilter:
         """Process and filter news with retry logic"""
         try:
             if not date_str:
-                date_str = datetime.now().strftime('%Y%m%d')
+                # Default to yesterday's date
+                current_time = datetime.now(zoneinfo.ZoneInfo("UTC"))
+                yesterday = current_time - timedelta(days=1)
+                date_str = yesterday.strftime('%Y%m%d')
                 
             logger.info(f"Processing news for date: {date_str}")
             

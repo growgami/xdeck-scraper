@@ -3,7 +3,8 @@
 import logging
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
+import zoneinfo
 import asyncio
 from openai import OpenAI, AsyncOpenAI
 from error_handler import with_retry, APIError, log_error, RetryConfig
@@ -111,9 +112,17 @@ class TweetScorer:
             logger.error(f"Error validating tweet: {str(e)}")
             return False
             
-    async def process_tweets(self, date_str):
+    async def process_tweets(self, date_str=None):
         """Process all tweets for a given date"""
         try:
+            if not date_str:
+                # Default to yesterday's date
+                current_time = datetime.now(zoneinfo.ZoneInfo("UTC"))
+                yesterday = current_time - timedelta(days=1)
+                date_str = yesterday.strftime('%Y%m%d')
+                
+            logger.info(f"Processing tweets for date: {date_str}")
+            
             # Load tweets from processed file
             file_path = self.processed_dir / f'processed_tweets_{date_str}.json'
             if not file_path.exists():

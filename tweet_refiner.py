@@ -1,7 +1,8 @@
 import logging
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
+import zoneinfo
 import asyncio
 import aiohttp
 import re
@@ -324,7 +325,10 @@ class TweetRefiner:
         """Process and refine tweets for a given date"""
         try:
             if not date_str:
-                date_str = datetime.now().strftime('%Y%m%d')
+                # Default to yesterday's date
+                current_time = datetime.now(zoneinfo.ZoneInfo("UTC"))
+                yesterday = current_time - timedelta(days=1)
+                date_str = yesterday.strftime('%Y%m%d')
                 
             logger.info(f"Starting refinement for {date_str}")
             
@@ -353,7 +357,7 @@ class TweetRefiner:
                 refined_data['columns'][column_id] = refined_tweets
                 refined_data['total_tweets'] += len(refined_tweets)
                 
-                logger.info(f"Column {column_id}: Refined {len(tweets)} → {len(refined_tweets)} tweets")
+                logger.info(f"Column {column_id}: Refined {len(tweets)} to {len(refined_tweets)} tweets")
                 
                 if int(column_id) < len(data['columns']) - 1:
                     await asyncio.sleep(5)
@@ -362,7 +366,7 @@ class TweetRefiner:
             with open(file_path, 'w') as f:
                 json.dump(refined_data, f, indent=2)
                 
-            logger.info(f"Refinement complete: {data['total_tweets']} → {refined_data['total_tweets']} tweets")
+            logger.info(f"Refinement complete: {data['total_tweets']} to {refined_data['total_tweets']} tweets")
             
         except Exception as e:
             logger.error(f"Error during refinement: {str(e)}")

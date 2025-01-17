@@ -2,18 +2,22 @@ import os
 import asyncio
 import signal
 import sys
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-from dotenv import load_dotenv
+import json
 import logging
+from datetime import datetime, timedelta
+import zoneinfo
 from pathlib import Path
+from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+
 from browser_automation import BrowserAutomation
 from tweet_scraper import TweetScraper
 from garbage_collector import GarbageCollector
 from error_handler import with_retry, RetryConfig, BrowserError, DataProcessingError, TelegramError
-import json
+
+# Reduce httpx logging
+logging.getLogger('httpx').setLevel(logging.WARNING)
 
 class TwitterNewsBot:
     def __init__(self):
@@ -58,7 +62,7 @@ class TwitterNewsBot:
         
         # Track monitoring stats
         self.monitor_stats = {
-            'start_time': datetime.now(ZoneInfo("UTC")),
+            'start_time': datetime.now(zoneinfo.ZoneInfo("UTC")),
             'total_checks': 0,
             'total_tweets_found': 0,
             'errors': 0
@@ -68,7 +72,7 @@ class TwitterNewsBot:
         self.scheduler = AsyncIOScheduler()
             
         # Get today's date for file organization
-        self.today = datetime.now(ZoneInfo("UTC")).strftime('%Y%m%d')
+        self.today = datetime.now(zoneinfo.ZoneInfo("UTC")).strftime('%Y%m%d')
         
         # Ensure data directories exist
         self.setup_directories()
@@ -125,7 +129,7 @@ class TwitterNewsBot:
             if self.browser:
                 await self.browser.close()
             raise BrowserError(f"Failed to initialize browser: {str(e)}")
-        
+            
     async def initial_scrape(self):
         """Initial scraping of all tweets from all columns"""
         logger = logging.getLogger(__name__)
@@ -195,14 +199,13 @@ class TwitterNewsBot:
             raise DataProcessingError(f"Failed to score tweets: {str(e)}")
 
     async def refine_tweets(self):
-        """Refine and deduplicate tweets"""
+        """Refine tweets using TweetRefiner"""
         logger = logging.getLogger(__name__)
         try:
             from tweet_refiner import TweetRefiner
             refiner = TweetRefiner(self.config)
-            await refiner.process_tweets(self.today)
+            await refiner.refine_tweets(self.today)
             logger.info("Successfully refined tweets")
-            return True
         except Exception as e:
             logger.error(f"Error refining tweets: {str(e)}")
             raise DataProcessingError(f"Failed to refine tweets: {str(e)}")
@@ -254,15 +257,10 @@ class TwitterNewsBot:
                         logger.warning(f"No channel ID found for category {category}")
                         continue
                         
-                    # Format and send
-                    formatted_text = sender.format_text(content['text'])
-                    if not formatted_text:
-                        logger.info(f"Empty formatted text for {category}, skipping")
-                        continue
-                        
+                    # Send message
                     success = await sender.send_message(
                         channel_id=channel_id,
-                        text=formatted_text
+                        text=content['text']
                     )
                     
                     if success:
@@ -284,45 +282,49 @@ class TwitterNewsBot:
             raise TelegramError(f"Failed to send telegram updates: {str(e)}")
 
     async def process_daily_summaries(self):
-        """Process and generate daily summaries"""
+        """Process daily summaries"""
         logger = logging.getLogger(__name__)
         try:
             async with self._processing_lock:
-                # Pause continuous scraping
-                self.is_scraping = False
-                logger.info("Paused continuous scraping for daily processing")
+                # Get yesterday's date since we're processing at 6 AM
+                current_time = datetime.now(zoneinfo.ZoneInfo("UTC"))
+                yesterday = current_time - timedelta(days=1)
+                self.today = yesterday.strftime('%Y%m%d')
+                logger.info(f"Starting daily processing for date: {self.today}")
+                
+                # Pause continuous scraping during processing
+                self.pause_scraping = True
+                logger.info("Paused continuous scraping")
                 
                 try:
-                    # Run the complete pipeline
-                    logger.info("Starting daily processing pipeline")
-                    
-                    # 1. Process raw tweets
+                    # Process tweets
                     await self.process_data()
                     logger.info("Completed tweet processing")
                     
-                    # 2. Score tweets
+                    # Score tweets
                     await self.score_tweets()
                     logger.info("Completed tweet scoring")
                     
-                    # 3. Refine and deduplicate
+                    # Refine tweets
                     await self.refine_tweets()
                     logger.info("Completed tweet refinement")
                     
-                    # 4. Filter and categorize
+                    # Filter news
                     await self.filter_news()
                     logger.info("Completed news filtering")
                     
-                    # 5. Send to Telegram
+                    # Send updates to Telegram
                     await self.send_telegram_updates()
-                    logger.info("Completed sending updates")
+                    logger.info("Completed sending Telegram updates")
                     
                 finally:
                     # Resume continuous scraping
-                    self.is_scraping = True
+                    self.pause_scraping = False
                     logger.info("Resumed continuous scraping")
-                    
+            
         except Exception as e:
-            logger.error(f"Error in daily summary processing: {str(e)}")
+            logger.error(f"Error processing daily summaries: {str(e)}")
+            self.pause_scraping = False  # Ensure scraping resumes even if there's an error
             raise DataProcessingError(f"Failed to process daily summaries: {str(e)}")
 
     async def continuous_scraping(self):
@@ -373,7 +375,7 @@ class TwitterNewsBot:
         while self.is_running:
             try:
                 # Get current time and next summary time
-                current_time = datetime.now(ZoneInfo("UTC"))
+                current_time = datetime.now(zoneinfo.ZoneInfo("UTC"))
                 next_summary_time = self.last_summary_time
                 
                 # Calculate seconds until next summary
@@ -451,6 +453,10 @@ class TwitterNewsBot:
             # Initial scrape of all columns
             await self.initial_scrape()
             
+            # Run initial summary generation for yesterday's data
+            logger.info("Running initial summary generation on launch...")
+            await self.process_daily_summaries()
+            
             # Schedule daily summary generation at 6 AM UTC
             self.scheduler.add_job(
                 self.process_daily_summaries,
@@ -472,7 +478,7 @@ class TwitterNewsBot:
         finally:
             await self.shutdown()
 
-def handle_interrupt():
+def handle_interrupt(signum=None, frame=None):
     """Handle keyboard interrupt - aggressive shutdown"""
     logger = logging.getLogger(__name__)
     logger.info("Received interrupt signal - performing quick shutdown")
@@ -480,19 +486,25 @@ def handle_interrupt():
     os._exit(0)
 
 async def main():
+    """Main entry point for the application"""
+    logger = logging.getLogger(__name__)
     bot = None
+    
     try:
         # Setup signal handlers for both Windows and Unix
-        signal.signal(signal.SIGINT, lambda s, f: handle_interrupt())
+        signal.signal(signal.SIGINT, handle_interrupt)
         if sys.platform != 'win32':
-            signal.signal(signal.SIGTERM, lambda s, f: handle_interrupt())
+            signal.signal(signal.SIGTERM, handle_interrupt)
             
         bot = TwitterNewsBot()
         await bot.run()
+        
     except Exception as e:
-        logging.getLogger(__name__).error(f"Application error: {str(e)}")
+        logger.error(f"Application error: {str(e)}")
+        if bot:
+            await bot.shutdown()
         os._exit(1)
-
+        
 if __name__ == "__main__":
     try:
         asyncio.run(main())
