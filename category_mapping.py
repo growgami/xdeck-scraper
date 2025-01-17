@@ -19,7 +19,7 @@ TELEGRAM_CHANNEL_MAP: Dict[str, str] = {
     'Arbitrum Ecosystem': 'arbitrum',
     'IOTA Ecosystem': 'iota',
     'AI Agents': 'ai_agent',
-    'DefAI': 'defi'
+    'DefAI': 'defai'
 }
 
 # Category-specific focus areas for news filtering
