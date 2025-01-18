@@ -37,6 +37,10 @@ class TelegramSender:
             logger.warning("Received empty text to format")
             return ""
             
+        # Skip if text is already formatted (contains HTML tags)
+        if any(tag in text for tag in ['<u>', '<b>', '<i>', '<a href']):
+            return text
+            
         try:
             lines = text.split('\n')
             formatted_lines = []
@@ -50,10 +54,9 @@ class TelegramSender:
                     
                 # Format header (Date - Category Rollup)
                 if ' - ' in line and 'Rollup' in line:
-                    # Convert date format from YYYYMMDD to Month DD
                     try:
                         date_str, rest = line.split(' - ', 1)
-                        date_obj = datetime.strptime(date_str, '%Y%m%d')
+                        date_obj = datetime.strptime(date_str.strip(), '%Y%m%d')
                         formatted_date = date_obj.strftime('%B %d')
                         formatted_header = f"{formatted_date} - {rest}"
                         formatted_lines.append(f"<u><b><i>{html.escape(formatted_header)}</i></b></u>")
