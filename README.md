@@ -5,17 +5,22 @@ An AI-powered news aggregator and summarizer for crypto and web3 content. The se
 ## Features
 
 - Automated Twitter scraping using Playwright
+- Headless browser optimized for Ubuntu servers
+- Continuous tweet monitoring (100ms intervals)
+- Per-column JSON storage with latest tweet tracking
+- Error handling with exponential backoff retries
+- Memory-optimized garbage collection
 - AI-powered tweet scoring and categorization using DeepSeek API
 - Smart news filtering and summarization
 - Automated distribution to Telegram channels
-- Memory-optimized with garbage collection for 2GB RAM environments
 - Scheduled daily summaries at 6 AM UTC
 
 ## Prerequisites
 
 - Python 3.10+
 - 2GB RAM minimum
-- Twitter account with TweetDeck access
+- Twitter account credentials
+- TweetDeck URL with configured columns
 - Telegram Bot Token and Channel IDs
 - DeepSeek API Key
 
@@ -47,22 +52,9 @@ playwright install
 5. Create a `.env` file with the following variables:
 ```env
 # Twitter Credentials
-TWITTER_USERNAME=your_username
-TWITTER_PASSWORD=your_password
-TWITTER_VERIFICATION_CODE=your_2fa_code
-TWEETDECK_URL=https://tweetdeck.twitter.com/
-
-# DeepSeek API
-DEEPSEEK_API_KEY=your_api_key
-
-# Telegram
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_POLKADOT_CHANNEL_ID=channel_id
-TELEGRAM_IOTA_CHANNEL_ID=channel_id
-TELEGRAM_ARBITRUM_CHANNEL_ID=channel_id
-TELEGRAM_NEAR_CHANNEL_ID=channel_id
-TELEGRAM_AI_AGENT_CHANNEL_ID=channel_id
-TELEGRAM_DEFI_CHANNEL_ID=channel_id
+TWITTER_USERNAME="your_twitter_username"
+TWITTER_PASSWORD="your_twitter_password"
+TWEETDECK_URL="https://tweetdeck.twitter.com/your-deck-url"
 
 # Optional Configuration
 MONITOR_INTERVAL=0.1       # Tweet check interval in seconds
@@ -73,17 +65,13 @@ GC_CHECK_INTERVAL=3600    # Garbage collection interval in seconds
 
 ## Usage
 
-1. Start the bot:
-```bash
-python main.py
-```
-
 The service will automatically:
-- Initialize browser and login to TweetDeck
-- Scrape tweets continuously from configured columns
-- Process and score tweets using DeepSeek API
-- Generate daily news summaries at 6 AM UTC
-- Send categorized summaries to Telegram channels
+- Initialize headless browser and login to TweetDeck
+- Identify and track columns from configured URL
+- Continuously scrape new tweets (every 100ms)
+- Store tweets in per-column JSON files
+- Maintain session state between restarts
+- Perform automatic garbage collection
 
 ## Project Structure
 
@@ -91,58 +79,17 @@ The service will automatically:
 ai-newsletter/
 ├── main.py                 # Main application entry point
 ├── browser_automation.py   # Browser automation using Playwright
-├── tweet_scraper.py       # Tweet scraping functionality
-├── data_processor.py      # Raw tweet processing
-├── tweet_scorer.py        # Tweet scoring using DeepSeek
-├── tweet_refiner.py       # Tweet refinement and deduplication
-├── news_filter.py         # News filtering and categorization
-├── telegram_sender.py     # Telegram message distribution
-├── garbage_collector.py   # Memory management
-├── category_mapping.py    # Centralized category configurations
-├── error_handler.py       # Error handling and retry logic
-├── data/                  # Data storage
-│   ├── raw/              # Raw scraped tweets by date
-│   ├── processed/        # Processed tweet data
-│   ├── summaries/        # Generated summaries
-│   └── session/          # Browser session data
-└── logs/                 # Application logs
-```
-
-## Category Structure
-
-The bot processes tweets for the following ecosystems:
-- NEAR Ecosystem
-- Polkadot Ecosystem
-- Arbitrum Ecosystem
-- IOTA Ecosystem
-- AI Agents
-- DefAI
-
-Each category has specific focus areas and subcategories defined in `category_mapping.py`.
-
-## Deployment
-
-For production deployment, use the provided systemd service:
-
-1. Copy service file:
-```bash
-sudo cp newsbot.service /etc/systemd/system/
-```
-
-2. Create newsbot user and set permissions:
-```bash
-sudo useradd -r -s /bin/false newsbot
-sudo chown -R newsbot:newsbot /opt/ai_newsletter
-```
-
-3. Enable and start the service:
-```bash
-sudo systemctl enable newsbot
-sudo systemctl start newsbot
+├── tweet_scraper.py        # Tweet scraping functionality
+├── garbage_collector.py    # Memory management
+├── error_handler.py        # Error handling and retry logic
+├── data/                   # Data storage
+│   ├── raw/                # Raw scraped tweets by date
+│   └── session/            # Browser session data
+└── logs/                   # Application logs
 ```
 
 ## License
 
 Copyright © 2024 Growgami. All rights reserved.
 
-This software is proprietary and confidential. Unauthorized copying, transfer, or reproduction of the contents of this software, via any medium, is strictly prohibited. 
+This software is proprietary and confidential. Unauthorized copying, transfer, or reproduction of the contents of this software, via any medium, is strictly prohibited.
