@@ -17,12 +17,10 @@ class GarbageCollector:
         # Setup data directories
         self.data_dir = Path('data')
         self.raw_dir = self.data_dir / 'raw'
-        self.processed_dir = self.data_dir / 'processed'
-        self.summaries_dir = self.data_dir / 'summaries'
         self.logs_dir = Path('logs')
         
         # Ensure directories exist
-        for dir_path in [self.raw_dir, self.processed_dir, self.summaries_dir, self.logs_dir]:
+        for dir_path in [self.raw_dir, self.logs_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
             
     async def start(self):
