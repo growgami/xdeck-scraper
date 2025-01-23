@@ -17,8 +17,6 @@ An AI-powered news aggregator and summarizer for crypto and web3 content. The se
 - 2GB RAM minimum
 - Twitter account credentials
 - TweetDeck URL with configured columns
-- Telegram Bot Token and Channel IDs
-- DeepSeek API Key
 
 ## Installation
 
