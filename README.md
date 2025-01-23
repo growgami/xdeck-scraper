@@ -10,10 +10,6 @@ An AI-powered news aggregator and summarizer for crypto and web3 content. The se
 - Per-column JSON storage with latest tweet tracking
 - Error handling with exponential backoff retries
 - Memory-optimized garbage collection
-- AI-powered tweet scoring and categorization using DeepSeek API
-- Smart news filtering and summarization
-- Automated distribution to Telegram channels
-- Scheduled daily summaries at 6 AM UTC
 
 ## Prerequisites
 
