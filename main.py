@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()  # This must come before any environment variable access
+
 import os
 import asyncio
 import signal
@@ -7,43 +10,39 @@ import logging
 from datetime import datetime, timedelta
 import zoneinfo
 from pathlib import Path
-from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from browser_automation import BrowserAutomation
 from tweet_scraper import TweetScraper
 from garbage_collector import GarbageCollector
-from error_handler import with_retry, RetryConfig, BrowserError, DataProcessingError, TelegramError
+from error_handler import with_retry, RetryConfig, BrowserError
 
 # Reduce httpx logging
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
 class TwitterNewsBot:
     def __init__(self):
-        # Load environment variables
-        load_dotenv()
+        # Add strict validation
+        required_env_vars = [
+            'TWITTER_USERNAME',
+            'TWITTER_PASSWORD',
+            'TWEETDECK_URL'
+        ]
         
-        # Initialize configuration
+        missing = [var for var in required_env_vars if not os.getenv(var)]
+        if missing:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+        # Configuration remains the same
         self.config = {
             'twitter_username': os.getenv('TWITTER_USERNAME'),
             'twitter_password': os.getenv('TWITTER_PASSWORD'),
             'twitter_2fa': os.getenv('TWITTER_VERIFICATION_CODE'),
             'tweetdeck_url': os.getenv('TWEETDECK_URL'),
-            'telegram_token': os.getenv('TELEGRAM_BOT_TOKEN'),
-            'telegram_channels': {
-                'polkadot': os.getenv('TELEGRAM_POLKADOT_CHANNEL_ID'),
-                'iota': os.getenv('TELEGRAM_IOTA_CHANNEL_ID'),
-                'arbitrum': os.getenv('TELEGRAM_ARBITRUM_CHANNEL_ID'),
-                'near': os.getenv('TELEGRAM_NEAR_CHANNEL_ID'),
-                'ai_agent': os.getenv('TELEGRAM_AI_AGENT_CHANNEL_ID'),
-                'defi': os.getenv('TELEGRAM_DEFI_CHANNEL_ID'),
-                'test': os.getenv('TELEGRAM_TEST_CHANNEL_ID')
-            },
-            'deepseek_api_key': os.getenv('DEEPSEEK_API_KEY'),
-            'monitor_interval': float(os.getenv('MONITOR_INTERVAL', '0.1')),  # Default 100ms
+            'monitor_interval': float(os.getenv('MONITOR_INTERVAL', '0.1')),
             'max_retries': int(os.getenv('MAX_RETRIES', '3')),
-            'retry_delay': float(os.getenv('RETRY_DELAY', '2.0')),  # Seconds between retries
+            'retry_delay': float(os.getenv('RETRY_DELAY', '2.0')),
             'garbage_collection': {
                 'max_days_to_keep': int(os.getenv('MAX_DAYS_TO_KEEP', '7')),
                 'max_file_size_mb': int(os.getenv('MAX_FILE_SIZE_MB', '50')),
@@ -51,16 +50,14 @@ class TwitterNewsBot:
             }
         }
         
-        # Initialize components
+        # Remove all scheduler references
         self.browser = None
         self.scraper = None
         self.garbage_collector = None
         self.is_running = True
-        self.is_scraping = True
         self._shutdown_event = asyncio.Event()
-        self._processing_lock = asyncio.Lock()
         
-        # Track monitoring stats
+        # Monitoring stats remain
         self.monitor_stats = {
             'start_time': datetime.now(zoneinfo.ZoneInfo("UTC")),
             'total_checks': 0,
@@ -68,21 +65,14 @@ class TwitterNewsBot:
             'errors': 0
         }
         
-        # Initialize scheduler
-        self.scheduler = AsyncIOScheduler()
-            
-        # Get today's date for file organization
+        # Keep directory setup and logging
         self.today = datetime.now(zoneinfo.ZoneInfo("UTC")).strftime('%Y%m%d')
-        
-        # Ensure data directories exist
         self.setup_directories()
-        
-        # Setup logging after directories are created
         self.setup_logging()
         
     def setup_directories(self):
         """Create necessary directories if they don't exist"""
-        directories = ['data/raw', 'data/processed', 'data/session', 'logs']
+        directories = ['data/raw', 'data/session', 'logs']
         for dir_path in directories:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
             
@@ -109,12 +99,10 @@ class TwitterNewsBot:
             self.browser = BrowserAutomation(self.config)
             
             # Initialize browser
-            if not await self.browser.init_browser():
-                raise BrowserError("Failed to initialize browser")
+            await self.browser.init_browser()
             
             # Handle login
-            if not await self.browser.handle_login():
-                raise BrowserError("Failed to login to Twitter")
+            await self.browser.handle_login()
             
             # Initialize tweet scraper
             self.scraper = TweetScraper(self.browser.page, self.config)
@@ -139,7 +127,7 @@ class TwitterNewsBot:
         self.scraper.load_latest_tweets()
         
         # Scrape all columns concurrently
-        results = await self.scraper.scrape_all_columns(is_monitoring=False)
+        results = await self.scraper.scrape_all_columns()
         
         # Log results
         total_tweets = sum(count for _, count in results)
@@ -172,241 +160,39 @@ class TwitterNewsBot:
             logger.error(f"Error monitoring tweets: {str(e)}")
             return None
             
-    async def process_data(self):
-        """Process and deduplicate tweets"""
+    async def run_clean_loop(self):
+        """Simplified main loop focusing only on scraping"""
         logger = logging.getLogger(__name__)
         try:
-            from data_processor import DataProcessor
-            processor = DataProcessor()
-            processed_count = await processor.process_tweets(self.today)
-            logger.info(f"Successfully processed {processed_count} tweets")
-            return processed_count
-        except Exception as e:
-            logger.error(f"Error processing tweets: {str(e)}")
-            raise DataProcessingError(f"Failed to process tweets: {str(e)}")
-
-    async def score_tweets(self):
-        """Score tweets using TweetScorer"""
-        logger = logging.getLogger(__name__)
-        try:
-            from tweet_scorer import TweetScorer
-            scorer = TweetScorer(self.config)
-            await scorer.process_tweets(self.today)
-            logger.info("Successfully scored tweets")
-            return True
-        except Exception as e:
-            logger.error(f"Error scoring tweets: {str(e)}")
-            raise DataProcessingError(f"Failed to score tweets: {str(e)}")
-
-    async def refine_tweets(self):
-        """Refine tweets using TweetRefiner"""
-        logger = logging.getLogger(__name__)
-        try:
-            from tweet_refiner import TweetRefiner
-            refiner = TweetRefiner(self.config)
-            await refiner.refine_tweets(self.today)
-            logger.info("Successfully refined tweets")
-        except Exception as e:
-            logger.error(f"Error refining tweets: {str(e)}")
-            raise DataProcessingError(f"Failed to refine tweets: {str(e)}")
-
-    async def filter_news(self):
-        """Filter and categorize news"""
-        logger = logging.getLogger(__name__)
-        try:
-            from news_filter import NewsFilter
-            news_filter = NewsFilter(self.config)
-            await news_filter.process_news(self.today)
-            logger.info("Successfully filtered and categorized news")
-            return True
-        except Exception as e:
-            logger.error(f"Error filtering news: {str(e)}")
-            raise DataProcessingError(f"Failed to filter news: {str(e)}")
-        
-    async def send_telegram_updates(self):
-        """Send summaries to Telegram channels"""
-        logger = logging.getLogger(__name__)
-        try:
-            from telegram_sender import TelegramSender
-            sender = TelegramSender(self.config['telegram_token'])
+            # Initialize core components
+            await self.initialize_components()
             
-            # Load summaries
-            summaries_file = Path('data') / 'summaries' / f'summaries_{self.today}.json'
-            if not summaries_file.exists():
-                logger.error(f"No summaries file found for date {self.today}")
-                return False
-                
-            with open(summaries_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                
-            if not data or not data.get('summaries'):
-                logger.info("No summaries found in file, skipping send")
-                return False
-                
-            # Send to appropriate channels
-            for category, content in data['summaries'].items():
+            # Initial data collection
+            await self.initial_scrape()
+            
+            # Start continuous monitoring
+            while self.is_running:
                 try:
-                    if not content.get('text'):
-                        logger.info(f"No text content for {category}, skipping")
-                        continue
-                        
-                    # Get channel ID based on category
-                    channel_key = category.lower().split()[0]  # e.g., "NEAR Ecosystem" -> "near"
-                    channel_id = self.config['telegram_channels'].get(channel_key)
-                    if not channel_id:
-                        logger.warning(f"No channel ID found for category {category}")
-                        continue
-                        
-                    # Send message
-                    success = await sender.send_message(
-                        channel_id=channel_id,
-                        text=content['text']
-                    )
+                    self.monitor_stats['total_checks'] += 1
+                    results = await self.monitor_tweets()
                     
-                    if success:
-                        logger.info(f"Successfully sent {category} summary to channel {channel_id}")
-                    else:
-                        logger.error(f"Failed to send {category} summary to channel {channel_id}")
+                    if results:
+                        total_new = sum(count for _, count in results)
+                        self.monitor_stats['total_tweets_found'] += total_new
                         
-                    await asyncio.sleep(2)  # Delay between messages
+                    await asyncio.sleep(self.config['monitor_interval'])
                     
                 except Exception as e:
-                    logger.error(f"Error sending {category} summary: {str(e)}")
-                    continue
-                    
-            logger.info("Completed sending all summaries")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error in telegram updates: {str(e)}")
-            raise TelegramError(f"Failed to send telegram updates: {str(e)}")
-
-    async def process_daily_summaries(self):
-        """Process daily summaries"""
-        logger = logging.getLogger(__name__)
-        try:
-            async with self._processing_lock:
-                # Get yesterday's date since we're processing at 6 AM
-                current_time = datetime.now(zoneinfo.ZoneInfo("UTC"))
-                yesterday = current_time - timedelta(days=1)
-                self.today = yesterday.strftime('%Y%m%d')
-                logger.info(f"Starting daily processing for date: {self.today}")
-                
-                # Pause continuous scraping during processing
-                self.pause_scraping = True
-                logger.info("Paused continuous scraping")
-                
-                try:
-                    # Process tweets
-                    await self.process_data()
-                    logger.info("Completed tweet processing")
-                    
-                    # Score tweets
-                    await self.score_tweets()
-                    logger.info("Completed tweet scoring")
-                    
-                    # Refine tweets
-                    await self.refine_tweets()
-                    logger.info("Completed tweet refinement")
-                    
-                    # Filter news
-                    await self.filter_news()
-                    logger.info("Completed news filtering")
-                    
-                    # Send updates to Telegram
-                    await self.send_telegram_updates()
-                    logger.info("Completed sending Telegram updates")
-                    
-                    # Restart browser to free up resources
-                    logger.info("Restarting browser to free up resources...")
-                    if self.browser:
-                        await self.browser.close()
-                    await self.initialize_browser()
-                    logger.info("Browser restarted successfully")
-                    
-                finally:
-                    # Resume continuous scraping
-                    self.pause_scraping = False
-                    logger.info("Resumed continuous scraping")
-            
-        except Exception as e:
-            logger.error(f"Error processing daily summaries: {str(e)}")
-            self.pause_scraping = False  # Ensure scraping resumes even if there's an error
-            raise DataProcessingError(f"Failed to process daily summaries: {str(e)}")
-
-    async def continuous_scraping(self):
-        """Continuously monitor for new tweets"""
-        logger = logging.getLogger(__name__)
-        consecutive_errors = 0
-        max_consecutive_errors = 3
-        
-        while self.is_running:
-            try:
-                if not self.is_scraping:
+                    self.monitor_stats['errors'] += 1
+                    logger.error(f"Monitoring error: {str(e)}")
                     await asyncio.sleep(1)
-                    continue
                     
-                # Monitor for new tweets
-                self.monitor_stats['total_checks'] += 1
-                results = await self.monitor_tweets()
-                
-                if results:
-                    total_new_tweets = sum(count for _, count in results)
-                    self.monitor_stats['total_tweets_found'] += total_new_tweets
-                    
-                # Reset error counter on success
-                consecutive_errors = 0
-                
-                # Brief pause between checks
-                await asyncio.sleep(self.config['monitor_interval'])
-                
-            except Exception as e:
-                self.monitor_stats['errors'] += 1
-                consecutive_errors += 1
-                logger.error(f"Error in scraping loop: {str(e)}")
-                
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.critical("Too many consecutive errors, attempting browser reinitialization")
-                    try:
-                        await self.initialize_browser()
-                        consecutive_errors = 0
-                    except Exception as reinit_error:
-                        logger.error(f"Failed to reinitialize browser: {str(reinit_error)}")
-                        
-                # Exponential backoff on error
-                await asyncio.sleep(min(60, 2 ** consecutive_errors))  # Max 60 seconds
-
-    async def handle_summaries(self):
-        """Handle 6 AM UTC summary generation"""
-        logger = logging.getLogger(__name__)
-        while self.is_running:
-            try:
-                # Get current time and next summary time
-                current_time = datetime.now(zoneinfo.ZoneInfo("UTC"))
-                next_summary_time = self.last_summary_time
-                
-                # Calculate seconds until next summary
-                seconds_until_summary = (next_summary_time - current_time).total_seconds()
-                
-                if seconds_until_summary <= 0:
-                    # Time for summary
-                    logger.info("Starting daily summary generation")
-                    await self.process_daily_summaries()
-                    
-                    # Update last summary time to next 6 AM UTC
-                    self.last_summary_time = current_time.replace(
-                        hour=6, minute=0, second=0, microsecond=0
-                    ) + timedelta(days=1)
-                    
-                    # Update today's date
-                    self.today = current_time.strftime('%Y%m%d')
-                    
-                # Wait until next summary time (check every minute)
-                await asyncio.sleep(min(60, max(0, seconds_until_summary)))
-                
-            except Exception as e:
-                logger.error(f"Error in summary loop: {str(e)}")
-                await asyncio.sleep(60)  # Wait a minute before retrying
+        except Exception as e:
+            logger.error(f"Fatal error: {str(e)}")
+            await self.shutdown()
+            
+        finally:
+            await self.shutdown()
 
     async def shutdown(self):
         """Cleanup and shutdown"""
@@ -436,54 +222,15 @@ class TwitterNewsBot:
         logger.info("Shutdown complete")
         
     async def initialize_components(self):
-        """Initialize all components"""
+        """Initialize only required components"""
         logger = logging.getLogger(__name__)
         
-        # Initialize browser and scraper
+        # Browser and scraper
         await self.initialize_browser()
         
-        # Initialize garbage collector
-        logger.info("Initializing garbage collector...")
+        # Garbage collector
         self.garbage_collector = GarbageCollector(self.config['garbage_collection'])
-        
-        # Start garbage collection service
         asyncio.create_task(self.garbage_collector.start())
-        logger.info("Garbage collector initialized and started")
-        
-    async def run(self):
-        """Main application loop"""
-        logger = logging.getLogger(__name__)
-        try:
-            # Initialize all components
-            await self.initialize_components()
-            
-            # Initial scrape of all columns
-            await self.initial_scrape()
-            
-            # Run initial summary generation for yesterday's data
-            logger.info("Running initial summary generation on launch...")
-            await self.process_daily_summaries()
-            
-            # Schedule daily summary generation at 6 AM UTC
-            self.scheduler.add_job(
-                self.process_daily_summaries,
-                CronTrigger(hour=6, minute=0, timezone='UTC'),
-                id='daily_summaries',
-                replace_existing=True
-            )
-            
-            # Start the scheduler
-            self.scheduler.start()
-            
-            # Start continuous scraping
-            await self.continuous_scraping()
-            
-        except Exception as e:
-            logger.error(f"Error in main loop: {str(e)}")
-            await self.shutdown()
-            
-        finally:
-            await self.shutdown()
 
 def handle_interrupt(signum=None, frame=None):
     """Handle keyboard interrupt - aggressive shutdown"""
@@ -504,7 +251,7 @@ async def main():
             signal.signal(signal.SIGTERM, handle_interrupt)
             
         bot = TwitterNewsBot()
-        await bot.run()
+        await bot.run_clean_loop()
         
     except Exception as e:
         logger.error(f"Application error: {str(e)}")
